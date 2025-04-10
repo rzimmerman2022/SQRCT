@@ -1,0 +1,105 @@
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns="http://www.w3.org/TR/REC-html40">
+
+<head>
+<meta http-equiv=Content-Type content="text/x-ms-odc; charset=utf-8">
+<meta name=ProgId content=ODC.Database>
+<meta name=SourceType content=OLEDB>
+<title>Query - CLIENT QUOTES</title>
+<xml id=docprops><o:DocumentProperties
+  xmlns:o="urn:schemas-microsoft-com:office:office"
+  xmlns="http://www.w3.org/TR/REC-html40">
+  <o:Description>Connection to the 'CLIENT QUOTES' query in the workbook.</o:Description>
+  <o:Name>Query - CLIENT QUOTES</o:Name>
+ </o:DocumentProperties>
+</xml><xml id=msodc><odc:OfficeDataConnection
+  xmlns:odc="urn:schemas-microsoft-com:office:odc"
+  xmlns="http://www.w3.org/TR/REC-html40">
+  <odc:PowerQueryConnection odc:Type="OLEDB">
+   <odc:ConnectionString>Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;Location=&quot;CLIENT QUOTES&quot;;Extended Properties=&quot;&quot;</odc:ConnectionString>
+   <odc:CommandType>SQL</odc:CommandType>
+   <odc:CommandText>SELECT * FROM [CLIENT QUOTES]</odc:CommandText>
+  </odc:PowerQueryConnection>
+  <odc:PowerQueryMashupData>&lt;Mashup xmlns:xsd=&quot;http://www.w3.org/2001/XMLSchema&quot; xmlns:xsi=&quot;http://www.w3.org/2001/XMLSchema-instance&quot; xmlns=&quot;http://schemas.microsoft.com/DataMashup&quot;&gt;&lt;Client&gt;EXCEL&lt;/Client&gt;&lt;Version&gt;2.132.229.0&lt;/Version&gt;&lt;MinVersion&gt;2.21.0.0&lt;/MinVersion&gt;&lt;Culture&gt;en-US&lt;/Culture&gt;&lt;SafeCombine&gt;false&lt;/SafeCombine&gt;&lt;Items&gt;&lt;Query Name=&quot;CLIENT QUOTES&quot;&gt;&lt;Formula&gt;&lt;![CDATA[let&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 1: Get all files in the target folder&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    Source = Folder.Files(&quot;S:\CS Common\CLIENT QUOTES&quot;),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 2: Remove columns we don't need (but keep [Name] + [Folder Path])&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    RemovedColumns = Table.RemoveColumns(&#13;&#10;        Source,&#13;&#10;        {&#13;&#10;            &quot;Content&quot;,&#13;&#10;            &quot;Date accessed&quot;,&#13;&#10;            &quot;Date modified&quot;,&#13;&#10;            &quot;Date created&quot;,&#13;&#10;            &quot;Attributes&quot;&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 3: Duplicate Folder Path so we can split one copy&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    DuplicatedColumn = Table.DuplicateColumn(&#13;&#10;        RemovedColumns,&#13;&#10;        &quot;Folder Path&quot;,&#13;&#10;        &quot;Folder Path - Copy&quot;&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 4: Split the duplicated column by backslash&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    SplitColumn = Table.SplitColumn(&#13;&#10;        DuplicatedColumn,&#13;&#10;        &quot;Folder Path - Copy&quot;,&#13;&#10;        Splitter.SplitTextByDelimiter(&quot;\&quot;, QuoteStyle.Csv),&#13;&#10;        {&#13;&#10;            &quot;Folder Path - Copy.1&quot;,&quot;Folder Path - Copy.2&quot;,&#13;&#10;            &quot;Folder Path - Copy.3&quot;,&quot;Folder Path - Copy.4&quot;,&#13;&#10;            &quot;Folder Path - Copy.5&quot;,&quot;Folder Path - Copy.6&quot;,&#13;&#10;            &quot;Folder Path - Copy.7&quot;,&quot;Folder Path - Copy.8&quot;&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 5: Convert some of the split columns to Text (adjust if needed)&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    ChangedType = Table.TransformColumnTypes(&#13;&#10;        SplitColumn,&#13;&#10;        {&#13;&#10;            {&quot;Folder Path - Copy.1&quot;, type text},&#13;&#10;            {&quot;Folder Path - Copy.2&quot;, type text},&#13;&#10;            {&quot;Folder Path - Copy.3&quot;, type text},&#13;&#10;            {&quot;Folder Path - Copy.4&quot;, type text},&#13;&#10;            {&quot;Folder Path - Copy.5&quot;, type text},&#13;&#10;            {&quot;Folder Path - Copy.6&quot;, type text}&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 6: Add a new &quot;QuotePrefix&quot; column that parses the [Name] column&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    AddedQuotePrefix =&#13;&#10;        Table.AddColumn(&#13;&#10;            ChangedType,&#13;&#10;            &quot;QuotePrefix&quot;,&#13;&#10;            (row) =&gt;&#13;&#10;                let&#13;&#10;                    f = row[Name], // e.g. &quot;1_QUOTE SCCAQ8699.pdf&quot;&#13;&#10;                    extracted =&#13;&#10;                        if Text.Contains(f, &quot;SCAZ&quot;) then&#13;&#10;                            &quot;SCAZ&quot; &amp; Text.BeforeDelimiter(Text.AfterDelimiter(f, &quot;SCAZ&quot;), &quot; &quot;)&#13;&#10;                        else if Text.Contains(f, &quot;SCCA&quot;) then&#13;&#10;                            &quot;SCCA&quot; &amp; Text.BeforeDelimiter(Text.AfterDelimiter(f, &quot;SCCA&quot;), &quot; &quot;)&#13;&#10;                        else if Text.Contains(f, &quot;SCCO&quot;) then&#13;&#10;                            &quot;SCCO&quot; &amp; Text.BeforeDelimiter(Text.AfterDelimiter(f, &quot;SCCO&quot;), &quot; &quot;)&#13;&#10;                        else if Text.Contains(f, &quot;SCFL&quot;) then&#13;&#10;                            &quot;SCFL&quot; &amp; Text.BeforeDelimiter(Text.AfterDelimiter(f, &quot;SCFL&quot;), &quot; &quot;)&#13;&#10;                        else if Text.Contains(f, &quot;SCIL&quot;) then&#13;&#10;                            &quot;SCIL&quot; &amp; Text.BeforeDelimiter(Text.AfterDelimiter(f, &quot;SCIL&quot;), &quot; &quot;)&#13;&#10;                        else if Text.Contains(f, &quot;SCPA&quot;) then&#13;&#10;                            &quot;SCPA&quot; &amp; Text.BeforeDelimiter(Text.AfterDelimiter(f, &quot;SCPA&quot;), &quot; &quot;)&#13;&#10;                        else if Text.Contains(f, &quot;SCTX&quot;) then&#13;&#10;                            &quot;SCTX&quot; &amp; Text.BeforeDelimiter(Text.AfterDelimiter(f, &quot;SCTX&quot;), &quot; &quot;)&#13;&#10;                        else if Text.Contains(f, &quot;BSAZ&quot;) then&#13;&#10;                            &quot;BSAZ&quot; &amp; Text.BeforeDelimiter(Text.AfterDelimiter(f, &quot;BSAZ&quot;), &quot; &quot;)&#13;&#10;                        else if Text.Contains(f, &quot;BSCO&quot;) then&#13;&#10;                            &quot;BSCO&quot; &amp; Text.BeforeDelimiter(Text.AfterDelimiter(f, &quot;BSCO&quot;), &quot; &quot;)&#13;&#10;                        else if Text.Contains(f, &quot;BSFL&quot;) then&#13;&#10;                            &quot;BSFL&quot; &amp; Text.BeforeDelimiter(Text.AfterDelimiter(f, &quot;BSFL&quot;), &quot; &quot;)&#13;&#10;                        else if Text.Contains(f, &quot;BSMO&quot;) then&#13;&#10;                            &quot;BSMO&quot; &amp; Text.BeforeDelimiter(Text.AfterDelimiter(f, &quot;BSMO&quot;), &quot; &quot;)&#13;&#10;                        else&#13;&#10;                            null&#13;&#10;                in&#13;&#10;                    extracted&#13;&#10;        ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 7: Remove some unneeded split columns if desired&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    RemovedColumns1 = Table.RemoveColumns(&#13;&#10;        AddedQuotePrefix,&#13;&#10;        {&#13;&#10;            &quot;Folder Path - Copy.1&quot;,&#13;&#10;            &quot;Folder Path - Copy.2&quot;,&#13;&#10;            &quot;Folder Path - Copy.3&quot;&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 8: Reorder columns as desired&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    ReorderedColumns = Table.ReorderColumns(&#13;&#10;        RemovedColumns1,&#13;&#10;        {&#13;&#10;            &quot;Name&quot;,&#13;&#10;            &quot;Extension&quot;,&#13;&#10;            &quot;Folder Path - Copy.4&quot;,&#13;&#10;            &quot;QuotePrefix&quot;,&#13;&#10;            &quot;Folder Path - Copy.5&quot;,&#13;&#10;            &quot;Folder Path - Copy.6&quot;,&#13;&#10;            &quot;Folder Path - Copy.7&quot;,&#13;&#10;            &quot;Folder Path - Copy.8&quot;,&#13;&#10;            &quot;Folder Path&quot;&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 9: Rename &quot;Folder Path - Copy.4&quot; to &quot;Owner&quot;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    RenamedColumns = Table.RenameColumns(&#13;&#10;        ReorderedColumns,&#13;&#10;        {&#13;&#10;            {&quot;Folder Path - Copy.4&quot;, &quot;Owner&quot;}&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 10: Reorder columns again if needed&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    ReorderedColumns1 = Table.ReorderColumns(&#13;&#10;        RenamedColumns,&#13;&#10;        {&#13;&#10;            &quot;Owner&quot;,&#13;&#10;            &quot;QuotePrefix&quot;,&#13;&#10;            &quot;Name&quot;,&#13;&#10;            &quot;Extension&quot;,&#13;&#10;            &quot;Folder Path - Copy.5&quot;,&#13;&#10;            &quot;Folder Path - Copy.6&quot;,&#13;&#10;            &quot;Folder Path - Copy.7&quot;,&#13;&#10;            &quot;Folder Path - Copy.8&quot;,&#13;&#10;            &quot;Folder Path&quot;&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 11 (NEW): Add &quot;FullPath&quot; column, combining Folder Path + Name&#13;&#10;    // Assuming Folder Path already ends with a &quot;\&quot; from Folder.Files&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    AddFullPath = Table.AddColumn(&#13;&#10;        ReorderedColumns1,&#13;&#10;        &quot;FullPath&quot;,&#13;&#10;        each [Folder Path] &amp; [Name],&#13;&#10;        type text&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 12 (Optional): Reorder columns to place &quot;FullPath&quot; next to &quot;Name&quot;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    FinalReorder = Table.ReorderColumns(&#13;&#10;        AddFullPath,&#13;&#10;        {&#13;&#10;            &quot;Owner&quot;,&#13;&#10;            &quot;QuotePrefix&quot;,&#13;&#10;            &quot;Name&quot;,&#13;&#10;            &quot;FullPath&quot;,&#13;&#10;            &quot;Extension&quot;,&#13;&#10;            &quot;Folder Path - Copy.5&quot;,&#13;&#10;            &quot;Folder Path - Copy.6&quot;,&#13;&#10;            &quot;Folder Path - Copy.7&quot;,&#13;&#10;            &quot;Folder Path - Copy.8&quot;,&#13;&#10;            &quot;Folder Path&quot;&#13;&#10;        }&#13;&#10;    )&#13;&#10;in&#13;&#10;    FinalReorder]]&gt;&lt;/Formula&gt;&lt;IsParameterQuery xsi:nil=&quot;true&quot; /&gt;&lt;IsDirectQuery xsi:nil=&quot;true&quot; /&gt;&lt;/Query&gt;&lt;/Items&gt;&lt;/Mashup&gt;</odc:PowerQueryMashupData>
+ </odc:OfficeDataConnection>
+</xml>
+<style>
+<!--
+    .ODCDataSource
+    {
+    behavior: url(dataconn.htc);
+    }
+-->
+</style>
+ 
+</head>
+
+<body onload='init()' scroll=no leftmargin=0 topmargin=0 rightmargin=0 style='border: 0px'>
+<table style='border: solid 1px threedface; height: 100%; width: 100%' cellpadding=0 cellspacing=0 width='100%'> 
+  <tr> 
+    <td id=tdName style='font-family:arial; font-size:medium; padding: 3px; background-color: threedface'> 
+      &nbsp; 
+    </td> 
+     <td id=tdTableDropdown style='padding: 3px; background-color: threedface; vertical-align: top; padding-bottom: 3px'>
+
+      &nbsp; 
+    </td> 
+  </tr> 
+  <tr> 
+    <td id=tdDesc colspan='2' style='border-bottom: 1px threedshadow solid; font-family: Arial; font-size: 1pt; padding: 2px; background-color: threedface'>
+
+      &nbsp; 
+    </td> 
+  </tr> 
+  <tr> 
+    <td colspan='2' style='height: 100%; padding-bottom: 4px; border-top: 1px threedhighlight solid;'> 
+      <div id='pt' style='height: 100%' class='ODCDataSource'></div> 
+    </td> 
+  </tr> 
+</table> 
+
+  
+<script language='javascript'> 
+
+function init() { 
+  var sName, sDescription; 
+  var i, j; 
+  
+  try { 
+    sName = unescape(location.href) 
+  
+    i = sName.lastIndexOf(".") 
+    if (i>=0) { sName = sName.substring(1, i); } 
+  
+    i = sName.lastIndexOf("/") 
+    if (i>=0) { sName = sName.substring(i+1, sName.length); } 
+
+    document.title = sName; 
+    document.getElementById("tdName").innerText = sName; 
+
+    sDescription = document.getElementById("docprops").innerHTML; 
+  
+    i = sDescription.indexOf("escription>") 
+    if (i>=0) { j = sDescription.indexOf("escription>", i + 11); } 
+
+    if (i>=0 && j >= 0) { 
+      j = sDescription.lastIndexOf("</", j); 
+
+      if (j>=0) { 
+          sDescription = sDescription.substring(i+11, j); 
+        if (sDescription != "") { 
+            document.getElementById("tdDesc").style.fontSize="x-small"; 
+          document.getElementById("tdDesc").innerHTML = sDescription; 
+          } 
+        } 
+      } 
+    } 
+  catch(e) { 
+
+    } 
+  } 
+</script> 
+
+</body> 
+ 
+</html>

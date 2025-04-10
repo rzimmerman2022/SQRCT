@@ -1,0 +1,45 @@
+sqrct-repository/
+│
+├── .github/
+│   └── ... (workflows, templates) ...
+│
+├── data/
+│   └── ... (sample files) ...
+│
+├── docs/
+│   ├── ARCHITECTURE.md
+│   └── ... (other docs) ...
+│
+├── src/                    # Source code extracted from Excel files
+│   ├── ryan_workbook/      # Code specifically from Ryan's file
+│   │   ├── Module_Dashboard.bas
+│   │   ├── Module_Identity.bas   # (Contains WORKBOOK_IDENTITY = "RZ")
+│   │   └── Sheet_Dashboard.cls   # (Or Sheet2.cls, etc.)
+│   │
+│   ├── ally_workbook/      # Code specifically from Ally's file
+│   │   ├── Module_Dashboard.bas  # (Likely identical to Ryan's)
+│   │   ├── Module_Identity.bas   # (Contains WORKBOOK_IDENTITY = "AF")
+│   │   └── Sheet_Dashboard.cls   # (Or Sheet12.cls - near identical to Ryan's)
+│   │
+│   ├── master_workbook/    # Code specifically from the Master file
+│   │   ├── Module_Dashboard.bas  # (Or Module1.bas - potentially outdated/different)
+│   │   └── Sheet_Dashboard.cls   # (Or Sheet2.cls - potentially different)
+│   │   # (Note: Master might need its own Module_Identity if not present)
+│   │
+│   ├── sync_tool/          # Code from the SyncTool workbook
+│   │   ├── Module_SyncTool_Manager.bas
+│   │   ├── Module_File_Processor.bas
+│   │   └── ... (other SyncTool modules) ...
+│   │
+│   └── power_query/        # Extracted Power Query M scripts (assuming these are shared/identical across workbooks)
+│       ├── CSVQuotes.pq
+│       ├── MasterQuotes_Final.pq
+│       └── ... (other PQ scripts) ...
+│
+├── tests/
+│   └── ... (manual test plans) ...
+│
+├── .gitignore
+├── CONTRIBUTING.md
+├── LICENSE
+└── README.md

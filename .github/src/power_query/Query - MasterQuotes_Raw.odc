@@ -1,0 +1,105 @@
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns="http://www.w3.org/TR/REC-html40">
+
+<head>
+<meta http-equiv=Content-Type content="text/x-ms-odc; charset=utf-8">
+<meta name=ProgId content=ODC.Database>
+<meta name=SourceType content=OLEDB>
+<title>Query - MasterQuotes_Raw</title>
+<xml id=docprops><o:DocumentProperties
+  xmlns:o="urn:schemas-microsoft-com:office:office"
+  xmlns="http://www.w3.org/TR/REC-html40">
+  <o:Description>Connection to the 'MasterQuotes_Raw' query in the workbook.</o:Description>
+  <o:Name>Query - MasterQuotes_Raw</o:Name>
+ </o:DocumentProperties>
+</xml><xml id=msodc><odc:OfficeDataConnection
+  xmlns:odc="urn:schemas-microsoft-com:office:odc"
+  xmlns="http://www.w3.org/TR/REC-html40">
+  <odc:PowerQueryConnection odc:Type="OLEDB">
+   <odc:ConnectionString>Provider=Microsoft.Mashup.OleDb.1;Data Source=$Workbook$;Location=MasterQuotes_Raw;Extended Properties=&quot;&quot;</odc:ConnectionString>
+   <odc:CommandType>SQL</odc:CommandType>
+   <odc:CommandText>SELECT * FROM [MasterQuotes_Raw]</odc:CommandText>
+  </odc:PowerQueryConnection>
+  <odc:PowerQueryMashupData>&lt;Mashup xmlns:xsd=&quot;http://www.w3.org/2001/XMLSchema&quot; xmlns:xsi=&quot;http://www.w3.org/2001/XMLSchema-instance&quot; xmlns=&quot;http://schemas.microsoft.com/DataMashup&quot;&gt;&lt;Client&gt;EXCEL&lt;/Client&gt;&lt;Version&gt;2.132.229.0&lt;/Version&gt;&lt;MinVersion&gt;2.21.0.0&lt;/MinVersion&gt;&lt;Culture&gt;en-US&lt;/Culture&gt;&lt;SafeCombine&gt;false&lt;/SafeCombine&gt;&lt;Items&gt;&lt;Query Name=&quot;ExistingQuotes&quot;&gt;&lt;Formula&gt;&lt;![CDATA[let&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 1: Load the &quot;ExistingQuotes&quot; Excel table&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    Source = Excel.CurrentWorkbook(){[Name=&quot;ExistingQuotes&quot;]}[Content],&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 2: Convert column types&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    #&quot;Changed Type&quot; = Table.TransformColumnTypes(&#13;&#10;        Source,&#13;&#10;        {&#13;&#10;            {&quot;Date Pulled&quot;,     type date},&#13;&#10;            {&quot;Document Date&quot;,   type date},&#13;&#10;            {&quot;Document Number&quot;, type text},&#13;&#10;            {&quot;Customer Number&quot;, type text},&#13;&#10;            {&quot;Customer Name&quot;,   type text},&#13;&#10;            {&quot;User To Enter&quot;,   type text},&#13;&#10;            {&quot;Document Amount&quot;, type number},&#13;&#10;            {&quot;Salesperson ID&quot;,  type text},&#13;&#10;&#13;&#10;            // Old follow-up columns (to be removed):&#13;&#10;            {&quot;First F/U&quot;,       type text},&#13;&#10;            {&quot;Second F/U&quot;,      type text},&#13;&#10;            {&quot;Third F/U&quot;,       type text},&#13;&#10;            {&quot;Long-Term F/U&quot;,   type text},&#13;&#10;            {&quot;Email Contact&quot;,   type text},&#13;&#10;&#13;&#10;            // The single new override column:&#13;&#10;            {&quot;Historic Stage&quot;,  type text}&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 3: Remove old follow-up columns&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    #&quot;Removed Columns&quot; = Table.RemoveColumns(&#13;&#10;        #&quot;Changed Type&quot;,&#13;&#10;        {&#13;&#10;            &quot;First F/U&quot;,&#13;&#10;            &quot;Second F/U&quot;,&#13;&#10;            &quot;Third F/U&quot;,&#13;&#10;            &quot;Long-Term F/U&quot;,&#13;&#10;            &quot;Email Contact&quot;&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 4: Convert Document Amount to currency (optional)&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    #&quot;Changed Type1&quot; = Table.TransformColumnTypes(&#13;&#10;        #&quot;Removed Columns&quot;,&#13;&#10;        {&#13;&#10;            {&quot;Document Amount&quot;, Currency.Type}&#13;&#10;        }&#13;&#10;    )&#13;&#10;in&#13;&#10;    #&quot;Changed Type1&quot;]]&gt;&lt;/Formula&gt;&lt;IsParameterQuery xsi:nil=&quot;true&quot; /&gt;&lt;IsDirectQuery xsi:nil=&quot;true&quot; /&gt;&lt;/Query&gt;&lt;Query Name=&quot;MasterQuotes_Raw&quot;&gt;&lt;Formula&gt;&lt;![CDATA[let&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 1: Load the two existing queries (ExistingQuotes, CSVQuotes)&#13;&#10;    //         These must already exist in Power Query.&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    SourceExisting = ExistingQuotes,&#13;&#10;    SourceCSV = CSVQuotes,&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 1.1: Add a DataSource column to each query&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    ExistingWithSource = Table.AddColumn(SourceExisting, &quot;DataSource&quot;, each &quot;Legacy&quot;),&#13;&#10;    CSVWithSource = Table.AddColumn(SourceCSV, &quot;DataSource&quot;, each &quot;CSV&quot;),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 2: Append the two queries together&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    Merged = Table.Combine({ExistingWithSource, CSVWithSource}),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 3: Sort by Date Pulled (oldest to newest) then Document Amount (highest to lowest)&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    Sorted = Table.Sort(&#13;&#10;        Merged,&#13;&#10;        {&#13;&#10;            {&quot;Date Pulled&quot;, Order.Ascending},&#13;&#10;            {&quot;Document Amount&quot;, Order.Descending}&#13;&#10;        }&#13;&#10;    )&#13;&#10;in&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // Final Output: The combined and sorted table&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    Sorted]]&gt;&lt;/Formula&gt;&lt;IsParameterQuery xsi:nil=&quot;true&quot; /&gt;&lt;IsDirectQuery xsi:nil=&quot;true&quot; /&gt;&lt;/Query&gt;&lt;Query Name=&quot;CSVQuotes&quot;&gt;&lt;Formula&gt;&lt;![CDATA[let&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 1: Get all files in the target folder&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;     Source = Folder.Files(&quot;R:\Projects\Strategic Quote Recovery and Conversion Tracker (SQRCT)\30DayExports_DailyPull&quot;),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 2: Filter to only .csv files&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    OnlyCSVs = Table.SelectRows(Source, each [Extension] = &quot;.csv&quot;),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 3: For each CSV, parse with Csv.Document,&#13;&#10;    //         then skip the first row (CSV's own headers)&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    AddParsedCSV = Table.AddColumn(&#13;&#10;        OnlyCSVs,&#13;&#10;        &quot;Data&quot;,&#13;&#10;        each&#13;&#10;            let&#13;&#10;                rawCSV = Csv.Document(&#13;&#10;                    [Content],&#13;&#10;                    [&#13;&#10;                        Delimiter = &quot;,&quot;,&#13;&#10;                        Encoding = 65001,&#13;&#10;                        QuoteStyle = QuoteStyle.None&#13;&#10;                    ]&#13;&#10;                ),&#13;&#10;                // skip the very first row (header line)&#13;&#10;                removeHeaderRow = Table.Skip(rawCSV, 1)&#13;&#10;            in&#13;&#10;                removeHeaderRow&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 4: Expand that &quot;Data&quot; column&#13;&#10;    // Adjust if CSV has more/fewer columns&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    ExpandRows = Table.ExpandTableColumn(&#13;&#10;        AddParsedCSV,&#13;&#10;        &quot;Data&quot;,&#13;&#10;        {&#13;&#10;            &quot;Column1&quot;,&quot;Column2&quot;,&quot;Column3&quot;,&quot;Column4&quot;,&#13;&#10;            &quot;Column5&quot;,&quot;Column6&quot;,&quot;Column7&quot;,&quot;Column8&quot;,&quot;Column9&quot;&#13;&#10;        },&#13;&#10;        {&#13;&#10;            &quot;Batch Number&quot;,&quot;Document Date&quot;,&quot;Document Number&quot;,&#13;&#10;            &quot;Customer Number&quot;,&quot;Customer Name&quot;,&quot;Document Type&quot;,&#13;&#10;            &quot;User To Enter&quot;,&quot;Document Amount&quot;,&quot;Salesperson ID from Customer Master&quot;&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 5: Remove columns not needed (Batch Number, Document Type)&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    RemoveUnneeded = Table.RemoveColumns(&#13;&#10;        ExpandRows,&#13;&#10;        {&quot;Batch Number&quot;,&quot;Document Type&quot;}&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 6: Rename columns to match your final schema&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    RenameCols = Table.RenameColumns(&#13;&#10;        RemoveUnneeded,&#13;&#10;        {&#13;&#10;            {&quot;Document Date&quot;, &quot;Document Date&quot;},&#13;&#10;            {&quot;Document Number&quot;, &quot;Document Number&quot;},&#13;&#10;            {&quot;Customer Number&quot;, &quot;Customer Number&quot;},&#13;&#10;            {&quot;Customer Name&quot;, &quot;Customer Name&quot;},&#13;&#10;            {&quot;User To Enter&quot;, &quot;User To Enter&quot;},&#13;&#10;            {&quot;Document Amount&quot;, &quot;Document Amount&quot;},&#13;&#10;            {&quot;Salesperson ID from Customer Master&quot;, &quot;Salesperson ID&quot;}&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 7: Parse &quot;Date Pulled&quot; from the file name (e.g., SQRCT_20250210.csv)&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    AddDatePulled = Table.AddColumn(&#13;&#10;        RenameCols,&#13;&#10;        &quot;Date Pulled&quot;,&#13;&#10;        each&#13;&#10;            let&#13;&#10;                nameNoExt = Text.BeforeDelimiter([Name], &quot;.csv&quot;),  // e.g. &quot;SQRCT_20250210&quot;&#13;&#10;                datePart = Text.AfterDelimiter(nameNoExt, &quot;_&quot;)     // e.g. &quot;20250210&quot;&#13;&#10;            in&#13;&#10;                // Convert &quot;20250210&quot; =&gt; 2025-02-10&#13;&#10;                Date.FromText(datePart, [Format=&quot;yyyyMMdd&quot;])&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 8: Convert date columns to Date type&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    SetDateType = Table.TransformColumnTypes(&#13;&#10;        AddDatePulled,&#13;&#10;        {&#13;&#10;            {&quot;Date Pulled&quot;, type date},&#13;&#10;            {&quot;Document Date&quot;, type date}&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 9: Add F/U columns not in CSV&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    AddFUFld1 = Table.AddColumn(SetDateType, &quot;First F/U&quot;, each null),&#13;&#10;    AddFUFld2 = Table.AddColumn(AddFUFld1, &quot;Second F/U&quot;, each null),&#13;&#10;    AddFUFld3 = Table.AddColumn(AddFUFld2, &quot;Third F/U&quot;, each null),&#13;&#10;    AddFUFld4 = Table.AddColumn(AddFUFld3, &quot;Long-Term F/U&quot;, each null),&#13;&#10;    AddEmail = Table.AddColumn(AddFUFld4, &quot;Email Contact&quot;, each null),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 10: Sort by Date Pulled, then Document Date&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    SortedByDate = Table.Sort(&#13;&#10;        AddEmail,&#13;&#10;        {&#13;&#10;            {&quot;Date Pulled&quot;, Order.Ascending},&#13;&#10;            {&quot;Document Date&quot;, Order.Ascending}&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 11: Clean &quot;Document Amount&quot; (remove $ and commas)&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    RemoveDollars = Table.ReplaceValue(&#13;&#10;        SortedByDate,&#13;&#10;        &quot;$&quot;,&#13;&#10;        &quot;&quot;,&#13;&#10;        Replacer.ReplaceText,&#13;&#10;        {&quot;Document Amount&quot;}&#13;&#10;    ),&#13;&#10;    RemoveCommas = Table.ReplaceValue(&#13;&#10;        RemoveDollars,&#13;&#10;        &quot;,&quot;,&#13;&#10;        &quot;&quot;,&#13;&#10;        Replacer.ReplaceText,&#13;&#10;        {&quot;Document Amount&quot;}&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 12: Convert &quot;Document Amount&quot; to Currency&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    FinalCurrency = Table.TransformColumnTypes(&#13;&#10;        RemoveCommas,&#13;&#10;        {{&quot;Document Amount&quot;, Currency.Type}}&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 13: Remove leftover folder columns&#13;&#10;    // (Content, Name, Extension, Dates, Attributes, etc.)&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    RemoveFileCols = Table.RemoveColumns(&#13;&#10;        FinalCurrency,&#13;&#10;        {&#13;&#10;            &quot;Content&quot;,&quot;Name&quot;,&quot;Extension&quot;,&#13;&#10;            &quot;Date accessed&quot;,&quot;Date modified&quot;,&quot;Date created&quot;,&#13;&#10;            &quot;Attributes&quot;,&quot;Folder Path&quot;&#13;&#10;        }&#13;&#10;    ),&#13;&#10;&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // STEP 14: Reorder columns in final order&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    ReorderCols = Table.ReorderColumns(&#13;&#10;        RemoveFileCols,&#13;&#10;        {&#13;&#10;            &quot;Date Pulled&quot;,&#13;&#10;            &quot;Document Date&quot;,&#13;&#10;            &quot;Document Number&quot;,&#13;&#10;            &quot;Customer Number&quot;,&#13;&#10;            &quot;Customer Name&quot;,&#13;&#10;            &quot;User To Enter&quot;,&#13;&#10;            &quot;Document Amount&quot;,&#13;&#10;            &quot;Salesperson ID&quot;,&#13;&#10;            &quot;First F/U&quot;,&#13;&#10;            &quot;Second F/U&quot;,&#13;&#10;            &quot;Third F/U&quot;,&#13;&#10;            &quot;Long-Term F/U&quot;,&#13;&#10;            &quot;Email Contact&quot;&#13;&#10;        }&#13;&#10;    )&#13;&#10;&#13;&#10;    // If you want to remove those new F/U or Email columns, &#13;&#10;    // add another line:&#13;&#10;    //    Table.RemoveColumns(ReorderCols, {&quot;First F/U&quot;, &quot;Second F/U&quot;, &#13;&#10;    //                                     &quot;Third F/U&quot;, &quot;Long-Term F/U&quot;, &quot;Email Contact&quot;})&#13;&#10;&#13;&#10;in&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    // Final Output&#13;&#10;    //////////////////////////////////////////////////////////////////////////&#13;&#10;    ReorderCols]]&gt;&lt;/Formula&gt;&lt;IsParameterQuery xsi:nil=&quot;true&quot; /&gt;&lt;IsDirectQuery xsi:nil=&quot;true&quot; /&gt;&lt;/Query&gt;&lt;/Items&gt;&lt;/Mashup&gt;</odc:PowerQueryMashupData>
+ </odc:OfficeDataConnection>
+</xml>
+<style>
+<!--
+    .ODCDataSource
+    {
+    behavior: url(dataconn.htc);
+    }
+-->
+</style>
+ 
+</head>
+
+<body onload='init()' scroll=no leftmargin=0 topmargin=0 rightmargin=0 style='border: 0px'>
+<table style='border: solid 1px threedface; height: 100%; width: 100%' cellpadding=0 cellspacing=0 width='100%'> 
+  <tr> 
+    <td id=tdName style='font-family:arial; font-size:medium; padding: 3px; background-color: threedface'> 
+      &nbsp; 
+    </td> 
+     <td id=tdTableDropdown style='padding: 3px; background-color: threedface; vertical-align: top; padding-bottom: 3px'>
+
+      &nbsp; 
+    </td> 
+  </tr> 
+  <tr> 
+    <td id=tdDesc colspan='2' style='border-bottom: 1px threedshadow solid; font-family: Arial; font-size: 1pt; padding: 2px; background-color: threedface'>
+
+      &nbsp; 
+    </td> 
+  </tr> 
+  <tr> 
+    <td colspan='2' style='height: 100%; padding-bottom: 4px; border-top: 1px threedhighlight solid;'> 
+      <div id='pt' style='height: 100%' class='ODCDataSource'></div> 
+    </td> 
+  </tr> 
+</table> 
+
+  
+<script language='javascript'> 
+
+function init() { 
+  var sName, sDescription; 
+  var i, j; 
+  
+  try { 
+    sName = unescape(location.href) 
+  
+    i = sName.lastIndexOf(".") 
+    if (i>=0) { sName = sName.substring(1, i); } 
+  
+    i = sName.lastIndexOf("/") 
+    if (i>=0) { sName = sName.substring(i+1, sName.length); } 
+
+    document.title = sName; 
+    document.getElementById("tdName").innerText = sName; 
+
+    sDescription = document.getElementById("docprops").innerHTML; 
+  
+    i = sDescription.indexOf("escription>") 
+    if (i>=0) { j = sDescription.indexOf("escription>", i + 11); } 
+
+    if (i>=0 && j >= 0) { 
+      j = sDescription.lastIndexOf("</", j); 
+
+      if (j>=0) { 
+          sDescription = sDescription.substring(i+11, j); 
+        if (sDescription != "") { 
+            document.getElementById("tdDesc").style.fontSize="x-small"; 
+          document.getElementById("tdDesc").innerHTML = sDescription; 
+          } 
+        } 
+      } 
+    } 
+  catch(e) { 
+
+    } 
+  } 
+</script> 
+
+</body> 
+ 
+</html>
