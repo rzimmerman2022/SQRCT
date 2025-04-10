@@ -1,0 +1,187 @@
+let
+    //////////////////////////////////////////////////////////////////////////
+    // STEP 1: Get all files in the target folder
+    //////////////////////////////////////////////////////////////////////////
+    Source = Folder.Files("S:\CS Common\CLIENT QUOTES"),
+
+    //////////////////////////////////////////////////////////////////////////
+    // STEP 2: Remove columns we don't need (but keep [Name] + [Folder Path])
+    //////////////////////////////////////////////////////////////////////////
+    RemovedColumns = Table.RemoveColumns(
+        Source,
+        {
+            "Content",
+            "Date accessed",
+            "Date modified",
+            "Date created",
+            "Attributes"
+        }
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // STEP 3: Duplicate Folder Path so we can split one copy
+    //////////////////////////////////////////////////////////////////////////
+    DuplicatedColumn = Table.DuplicateColumn(
+        RemovedColumns,
+        "Folder Path",
+        "Folder Path - Copy"
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // STEP 4: Split the duplicated column by backslash
+    //////////////////////////////////////////////////////////////////////////
+    SplitColumn = Table.SplitColumn(
+        DuplicatedColumn,
+        "Folder Path - Copy",
+        Splitter.SplitTextByDelimiter("\", QuoteStyle.Csv),
+        {
+            "Folder Path - Copy.1","Folder Path - Copy.2",
+            "Folder Path - Copy.3","Folder Path - Copy.4",
+            "Folder Path - Copy.5","Folder Path - Copy.6",
+            "Folder Path - Copy.7","Folder Path - Copy.8"
+        }
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // STEP 5: Convert some of the split columns to Text (adjust if needed)
+    //////////////////////////////////////////////////////////////////////////
+    ChangedType = Table.TransformColumnTypes(
+        SplitColumn,
+        {
+            {"Folder Path - Copy.1", type text},
+            {"Folder Path - Copy.2", type text},
+            {"Folder Path - Copy.3", type text},
+            {"Folder Path - Copy.4", type text},
+            {"Folder Path - Copy.5", type text},
+            {"Folder Path - Copy.6", type text}
+        }
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // STEP 6: Add a new "QuotePrefix" column that parses the [Name] column
+    //////////////////////////////////////////////////////////////////////////
+    AddedQuotePrefix =
+        Table.AddColumn(
+            ChangedType,
+            "QuotePrefix",
+            (row) =>
+                let
+                    f = row[Name], // e.g. "1_QUOTE SCCAQ8699.pdf"
+                    extracted =
+                        if Text.Contains(f, "SCAZ") then
+                            "SCAZ" & Text.BeforeDelimiter(Text.AfterDelimiter(f, "SCAZ"), " ")
+                        else if Text.Contains(f, "SCCA") then
+                            "SCCA" & Text.BeforeDelimiter(Text.AfterDelimiter(f, "SCCA"), " ")
+                        else if Text.Contains(f, "SCCO") then
+                            "SCCO" & Text.BeforeDelimiter(Text.AfterDelimiter(f, "SCCO"), " ")
+                        else if Text.Contains(f, "SCFL") then
+                            "SCFL" & Text.BeforeDelimiter(Text.AfterDelimiter(f, "SCFL"), " ")
+                        else if Text.Contains(f, "SCIL") then
+                            "SCIL" & Text.BeforeDelimiter(Text.AfterDelimiter(f, "SCIL"), " ")
+                        else if Text.Contains(f, "SCPA") then
+                            "SCPA" & Text.BeforeDelimiter(Text.AfterDelimiter(f, "SCPA"), " ")
+                        else if Text.Contains(f, "SCTX") then
+                            "SCTX" & Text.BeforeDelimiter(Text.AfterDelimiter(f, "SCTX"), " ")
+                        else if Text.Contains(f, "BSAZ") then
+                            "BSAZ" & Text.BeforeDelimiter(Text.AfterDelimiter(f, "BSAZ"), " ")
+                        else if Text.Contains(f, "BSCO") then
+                            "BSCO" & Text.BeforeDelimiter(Text.AfterDelimiter(f, "BSCO"), " ")
+                        else if Text.Contains(f, "BSFL") then
+                            "BSFL" & Text.BeforeDelimiter(Text.AfterDelimiter(f, "BSFL"), " ")
+                        else if Text.Contains(f, "BSMO") then
+                            "BSMO" & Text.BeforeDelimiter(Text.AfterDelimiter(f, "BSMO"), " ")
+                        else
+                            null
+                in
+                    extracted
+        ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // STEP 7: Remove some unneeded split columns if desired
+    //////////////////////////////////////////////////////////////////////////
+    RemovedColumns1 = Table.RemoveColumns(
+        AddedQuotePrefix,
+        {
+            "Folder Path - Copy.1",
+            "Folder Path - Copy.2",
+            "Folder Path - Copy.3"
+        }
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // STEP 8: Reorder columns as desired
+    //////////////////////////////////////////////////////////////////////////
+    ReorderedColumns = Table.ReorderColumns(
+        RemovedColumns1,
+        {
+            "Name",
+            "Extension",
+            "Folder Path - Copy.4",
+            "QuotePrefix",
+            "Folder Path - Copy.5",
+            "Folder Path - Copy.6",
+            "Folder Path - Copy.7",
+            "Folder Path - Copy.8",
+            "Folder Path"
+        }
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // STEP 9: Rename "Folder Path - Copy.4" to "Owner"
+    //////////////////////////////////////////////////////////////////////////
+    RenamedColumns = Table.RenameColumns(
+        ReorderedColumns,
+        {
+            {"Folder Path - Copy.4", "Owner"}
+        }
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // STEP 10: Reorder columns again if needed
+    //////////////////////////////////////////////////////////////////////////
+    ReorderedColumns1 = Table.ReorderColumns(
+        RenamedColumns,
+        {
+            "Owner",
+            "QuotePrefix",
+            "Name",
+            "Extension",
+            "Folder Path - Copy.5",
+            "Folder Path - Copy.6",
+            "Folder Path - Copy.7",
+            "Folder Path - Copy.8",
+            "Folder Path"
+        }
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // STEP 11 (NEW): Add "FullPath" column, combining Folder Path + Name
+    // Assuming Folder Path already ends with a "\" from Folder.Files
+    //////////////////////////////////////////////////////////////////////////
+    AddFullPath = Table.AddColumn(
+        ReorderedColumns1,
+        "FullPath",
+        each [Folder Path] & [Name],
+        type text
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // STEP 12 (Optional): Reorder columns to place "FullPath" next to "Name"
+    //////////////////////////////////////////////////////////////////////////
+    FinalReorder = Table.ReorderColumns(
+        AddFullPath,
+        {
+            "Owner",
+            "QuotePrefix",
+            "Name",
+            "FullPath",
+            "Extension",
+            "Folder Path - Copy.5",
+            "Folder Path - Copy.6",
+            "Folder Path - Copy.7",
+            "Folder Path - Copy.8",
+            "Folder Path"
+        }
+    )
+in
+    FinalReorder
