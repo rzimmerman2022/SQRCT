@@ -107,13 +107,13 @@ let
     AddFUFld2 = Table.AddColumn(AddFUFld1, "Second F/U", each null),
     AddFUFld3 = Table.AddColumn(AddFUFld2, "Third F/U", each null),
     AddFUFld4 = Table.AddColumn(AddFUFld3, "Long-Term F/U", each null),
-    AddEmail = Table.AddColumn(AddFUFld4, "Email Contact", each null),
+    // AddEmail = Table.AddColumn(AddFUFld4, "Email Contact", each null), // REMOVED
 
     //////////////////////////////////////////////////////////////////////////
     // STEP 10: Sort by Date Pulled, then Document Date
     //////////////////////////////////////////////////////////////////////////
     SortedByDate = Table.Sort(
-        AddEmail,
+        AddFUFld4, // Changed from AddEmail
         {
             {"Date Pulled", Order.Ascending},
             {"Document Date", Order.Ascending}
@@ -176,8 +176,8 @@ let
             "First F/U",
             "Second F/U",
             "Third F/U",
-            "Long-Term F/U",
-            "Email Contact"
+            "Long-Term F/U"
+            // "Email Contact" // REMOVED
         }
     )
 

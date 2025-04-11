@@ -15,20 +15,20 @@ Private Const USEREDITS_SHEET_NAME As String = "UserEdits"
 Private Const UE_COL_DOCNUM As String = "A"
 Private Const UE_COL_PHASE As String = "B"
 Private Const UE_COL_LASTCONTACT As String = "C"
-Private Const UE_COL_EMAIL As String = "D"
-Private Const UE_COL_COMMENTS As String = "E"
-Private Const UE_COL_SOURCE As String = "F"
-Private Const UE_COL_TIMESTAMP As String = "G"
+' Private Const UE_COL_EMAIL As String = "D" ' REMOVED - Column Shift Required Below
+Private Const UE_COL_COMMENTS As String = "D" ' Shifted from E
+Private Const UE_COL_SOURCE As String = "E"   ' Shifted from F
+Private Const UE_COL_TIMESTAMP As String = "F" ' Shifted from G
 
 Private Const DB_COL_PHASE As String = "K"
 Private Const DB_COL_LASTCONTACT As String = "L"
-Private Const DB_COL_EMAIL As String = "M"
-Private Const DB_COL_COMMENTS As String = "N"
+' Private Const DB_COL_EMAIL As String = "M" ' REMOVED - Column Shift Required Below
+Private Const DB_COL_COMMENTS As String = "M" ' Shifted from N
 ' --- End Constants ---
 
 
 Private Sub Worksheet_Change(ByVal Target As Range)
-    ' Only run if changes are in columns K:N (user-editable columns) - Use Constants
+    ' Only run if changes are in columns K:M (user-editable columns) - Use Constants (Adjusted range)
     If Intersect(Target, Me.Range(DB_COL_PHASE & ":" & DB_COL_COMMENTS)) Is Nothing Then Exit Sub
     ' Skip rows above row 4 (header rows)
     If Target.Row < 4 Then Exit Sub
@@ -86,15 +86,15 @@ Private Sub Worksheet_Change(ByVal Target As Range)
             destRow = editRow
         End If
 
-        ' Map dashboard columns to UserEdits with standardized mapping using constants:
-        wsEdits.Cells(destRow, UE_COL_PHASE).Value = Me.Cells(Target.Row, DB_COL_PHASE).Value       ' Engagement Phase
-        wsEdits.Cells(destRow, UE_COL_LASTCONTACT).Value = Me.Cells(Target.Row, DB_COL_LASTCONTACT).Value ' Last Contact Date
-        wsEdits.Cells(destRow, UE_COL_EMAIL).Value = Me.Cells(Target.Row, DB_COL_EMAIL).Value         ' Email Contact
-        wsEdits.Cells(destRow, UE_COL_COMMENTS).Value = Me.Cells(Target.Row, DB_COL_COMMENTS).Value     ' User Comments
+        ' Map dashboard columns to UserEdits with standardized mapping using constants (Adjusted for removed Email):
+        wsEdits.Cells(destRow, UE_COL_PHASE).Value = Me.Cells(Target.Row, DB_COL_PHASE).Value       ' Engagement Phase (B)
+        wsEdits.Cells(destRow, UE_COL_LASTCONTACT).Value = Me.Cells(Target.Row, DB_COL_LASTCONTACT).Value ' Last Contact Date (C)
+        ' wsEdits.Cells(destRow, UE_COL_EMAIL).Value = Me.Cells(Target.Row, DB_COL_EMAIL).Value         ' Email Contact REMOVED
+        wsEdits.Cells(destRow, UE_COL_COMMENTS).Value = Me.Cells(Target.Row, DB_COL_COMMENTS).Value     ' User Comments (D - new)
 
-        ' Set ChangeSource to workbook identity and add timestamp using constants
-        wsEdits.Cells(destRow, UE_COL_SOURCE).Value = Module_Identity.GetWorkbookIdentity()  ' Use workbook identity from Module_Identity
-        wsEdits.Cells(destRow, UE_COL_TIMESTAMP).Value = Format$(Now(), "yyyy-mm-dd hh:mm:ss")
+        ' Set ChangeSource to workbook identity and add timestamp using constants (Adjusted columns)
+        wsEdits.Cells(destRow, UE_COL_SOURCE).Value = Module_Identity.GetWorkbookIdentity()  ' Source (E - new)
+        wsEdits.Cells(destRow, UE_COL_TIMESTAMP).Value = Format$(Now(), "yyyy-mm-dd hh:mm:ss") ' Timestamp (F - new)
 
         Module_Dashboard.LogUserEditsOperation "Updated UserEdits for DocNumber " & docNum & " with attribution " & Module_Identity.GetWorkbookIdentity() ' Use Module_Dashboard logger
     End If

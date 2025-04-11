@@ -312,6 +312,16 @@ let
             {"First Date Pulled", Order.Ascending},
             {"Document Number", Order.Ascending}
         }
+    ),
+
+    //////////////////////////////////////////////////////////////////////////
+    // STEP S: Add Explicit Blank Row Filtering
+    //////////////////////////////////////////////////////////////////////////
+    RemoveBlankRows = Table.SelectRows(
+        FinalSorted,
+        each ([Document Number] <> null and [Document Number] <> "") and // Standard null/empty check
+             ([Document Date] <> null or [Customer Name] <> null or [Document Amount] <> null)
     )
+
 in
-    FinalSorted
+    RemoveBlankRows
