@@ -209,12 +209,16 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     Dim docNum As String
     Dim i As Long
     Dim backupCreated As Boolean
+    Dim t_start As Single, t_save As Single, t_populate As Single, t_load As Single, t_restore As Single, t_format As Single ' Timing variables
     Dim userEditsDict As Object ' Dictionary for UserEdits lookup
     Dim editRow As Variant      ' To store row number or data from dictionary
 
     ' Create error recovery backup before any operations
     backupCreated = CreateUserEditsBackup("RefreshDashboard_" & Format(Now, "yyyymmdd_hhmmss"))
     LogUserEditsOperation "Starting dashboard refresh. PreserveUserEdits=" & PreserveUserEdits & ", Backup created: " & backupCreated
+
+    t_start = Timer ' Start total timer
+    Debug.Print "Start Refresh: " & t_start
 
     On Error GoTo ErrorHandler
 
@@ -228,11 +232,18 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     ' 2. Save any current user edits from the dashboard to UserEdits
     '    ONLY if we're not prioritizing manually edited UserEdits
     If Not PreserveUserEdits Then
-        SaveUserEditsFromDashboard
+        t_save = Timer
+        SaveUserEditsFromDashboard ' This now includes a dictionary load
+        Debug.Print "SaveUserEdits Time: " & Timer - t_save
     End If
 
     ' 3. Locate/create "SQRCT Dashboard" using name constant
     Set ws = GetOrCreateDashboardSheet(DASHBOARD_SHEET_NAME) ' Use Constant and helper function
+
+    ' *** ADDED: Ensure sheet is unprotected before any modifications ***
+    On Error Resume Next ' Ignore error if already unprotected
+    ws.Unprotect
+    On Error GoTo ErrorHandler ' Restore error handling
 
     ' 4. Clean up any duplicate headers/layout issues
     CleanupDashboardLayout ws
@@ -242,7 +253,9 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
 
     ' 6. Populate columns A-J with data from MasterQuotes_Final
     If IsMasterQuotesFinalPresent Then
+        t_populate = Timer
         PopulateMasterQuotesData ws ' Uses MASTER_QUOTES_FINAL_SOURCE constant internally
+        Debug.Print "PopulateFormulas Time: " & Timer - t_populate
     Else
         MsgBox "Warning: " & MASTER_QUOTES_FINAL_SOURCE & " not found. Dashboard created but no data pulled." & vbCrLf & _
                "Please ensure the data source exists.", vbInformation, "Data Source Not Found"
@@ -264,8 +277,11 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     End With
 
     ' 10. Restore user data from UserEdits to Dashboard using Dictionary
+    t_load = Timer
     Set userEditsDict = LoadUserEditsToDictionary(wsEdits)
+    Debug.Print "Load Dictionary (Restore) Time: " & Timer - t_load
 
+    t_restore = Timer
     For i = 4 To lastRow
         docNum = Trim(CStr(ws.Cells(i, "A").Value))
         If docNum <> "" And docNum <> "Document Number" Then
@@ -287,15 +303,16 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
         End If
     Next i
     Set userEditsDict = Nothing ' Clean up dictionary
+    Debug.Print "Restore Edits Loop Time: " & Timer - t_restore ' Includes lookups
 
     ' 11. Freeze header rows
     FreezeDashboard ws
 
-    ' 12. Apply color conditional formatting (optional)
+    ' 12. Apply color conditional formatting (optional) & 13. Protect columns
+    t_format = Timer
     ApplyColorFormatting ws
-
-    ' 13. Protect columns A-J, allow K-N (using UserInterfaceOnly)
     ProtectUserColumns ws ' Protection is now applied at the end of this sub
+    Debug.Print "Format/Protect Time: " & Timer - t_format
 
     ' 14. Update the timestamp with improved styling
     With ws.Range("G2:I2")
@@ -337,6 +354,7 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
 
     ' Log successful completion
     LogUserEditsOperation "Dashboard refresh completed successfully. Mode: " & IIf(PreserveUserEdits, "PreserveUserEdits", "StandardRefresh")
+    Debug.Print "Total RefreshDashboard VBA Time: " & Timer - t_start
 
     ' Clean up old backups if refresh was successful
     If backupCreated Then
@@ -1152,55 +1170,98 @@ Public Sub ApplyColorFormatting(ws As Worksheet)
     Set rngOccur = ws.Range("I4:I1000")
     Set rngPhase = ws.Range(DB_COL_PHASE & "4:" & DB_COL_PHASE & "1000") ' Use Constant for K
 
-    ' Apply conditional formatting to both columns
-    ApplyStageFormatting rngOccur
+    ' Apply conditional formatting ONLY to the Engagement Phase column (K)
+    ' ApplyStageFormatting rngOccur ' Removed - Applying text rules to numeric Col I caused errors
     ApplyStageFormatting rngPhase
 
     ' Re-protect, ensuring UserInterfaceOnly is True
     ws.Protect UserInterfaceOnly:=True, DrawingObjects:=True, Contents:=True, Scenarios:=True
 End Sub
 
-' Helper for detailed color rules with more conditions added
+' Helper for detailed color rules implementing the evidence-based color system
 Private Sub ApplyStageFormatting(rng As Range)
+    Dim formulaBase As String
+    formulaBase = "=EXACT(" & rng.Cells(1).Address(False, False) & ",""{PHASE}"")"
+
+    ' Clear existing rules first to ensure a clean slate
+    rng.FormatConditions.Delete
+
     With rng
-        ' First F/U (Light Blue)
-        .FormatConditions.Add Type:=xlTextString, String:="First F/U", TextOperator:=xlContains
-        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(197, 217, 241)
+        ' --- Follow-up Stages (Sequential Process) ---
+        ' First F/U: Light blue (#D0E6F5)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "First F/U")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(208, 230, 245)
 
-        ' Second F/U (Light Green)
-        .FormatConditions.Add Type:=xlTextString, String:="Second F/U", TextOperator:=xlContains
-        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(198, 239, 206)
+        ' Second F/U: Medium blue (#92C6ED)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "Second F/U")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(146, 198, 237)
 
-        ' Third F/U (Light Yellow)
-        .FormatConditions.Add Type:=xlTextString, String:="Third F/U", TextOperator:=xlContains
-        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(255, 235, 156)
+        ' Third F/U: Yellow (#F5E171)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "Third F/U")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(245, 225, 113)
 
-        ' Long-Term F/U (Orange)
-        .FormatConditions.Add Type:=xlTextString, String:="Long-Term F/U", TextOperator:=xlContains
-        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(255, 192, 0)
+        ' Long-Term F/U: Orange (#FF9636)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "Long-Term F/U")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(255, 150, 54)
 
-        ' WW/OM (Pink)
-        .FormatConditions.Add Type:=xlTextString, String:="WW/OM", TextOperator:=xlContains
-        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(255, 192, 203)
+        ' --- Queue/Processing Status ---
+        ' Requoting: Light lavender (#E3D7E8)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "Requoting")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(227, 215, 232)
 
-        ' Converted (Bright Green, Bold)
-        .FormatConditions.Add Type:=xlTextString, String:="Converted", TextOperator:=xlContains
+        ' Pending: Pale yellow (#FFF7D1)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "Pending")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(255, 247, 209)
+
+        ' No Response: Beige (#F5EEE0)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "No Response")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(245, 238, 224)
+
+        ' Texas (No F/U): Tan (#E6D9CC)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "Texas (No F/U)")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(230, 217, 204)
+
+        ' --- Team Member Assignments ---
+        ' AF: Teal (#A2D9D2)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "AF")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(162, 217, 210)
+
+        ' RZ: Periwinkle (#8A9BD4)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "RZ")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(138, 155, 212)
+
+        ' KMH: Salmon (#F7C4AF)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "KMH")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(247, 196, 175)
+
+        ' RI: Sky blue (#BFE1F3)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "RI")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(191, 225, 243)
+
+        ' WW/OM: Deep purple (#9B7CB9)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "WW/OM")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(155, 124, 185)
+
+        ' --- Outcome Statuses ---
+        ' Converted: Green (Adjusted x6) (Bold)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "Converted")
         With .FormatConditions(.FormatConditions.Count)
-            .Interior.Color = RGB(146, 208, 80)
+            .Interior.Color = RGB(120, 235, 120) ' Final final final green adjustment
             .Font.Bold = True
         End With
 
-        ' Declined (Light Red)
-        .FormatConditions.Add Type:=xlTextString, String:="Declined", TextOperator:=xlContains
-        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(255, 199, 206)
+        ' Declined: True red (#D12F2F)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "Declined")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(209, 47, 47)
 
-        ' Closed (Extra Order) (Light Gray)
-        .FormatConditions.Add Type:=xlTextString, String:="Closed (Extra Order)", TextOperator:=xlContains
-        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(217, 217, 217)
+        ' Closed (Extra Order): Medium-dark red (#B82727)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "Closed (Extra Order)")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(184, 39, 39)
 
-        ' Added: Closed (any type) (Medium Gray)
-        .FormatConditions.Add Type:=xlTextString, String:="Closed", TextOperator:=xlContains
-        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(217, 217, 217)
+        ' Closed: Dark red (#A61C1C)
+        .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "Closed")
+        .FormatConditions(.FormatConditions.Count).Interior.Color = RGB(166, 28, 28)
+
     End With
 End Sub
 
