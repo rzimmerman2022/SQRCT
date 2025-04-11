@@ -121,7 +121,7 @@ let
                     if occ = 1 then "First F/U"
                     else if occ = 2 then "Second F/U"
                     else if occ = 3 then "Third F/U"
-                    else "Long-Term F/U"
+                    else null // Changed from "Long-Term F/U" for occ >= 4
                 else
                     hist,
         type text
@@ -237,15 +237,15 @@ let
     ),
 
     //////////////////////////////////////////////////////////////////////////
-    // STEP N: Remove "Occurrence" as it's no longer needed
+    // STEP N: Rename Occurrence to Pull Count
     //////////////////////////////////////////////////////////////////////////
-    RemoveTemp = Table.RemoveColumns(ExpandedFinal, {"Occurrence"}),
+    RenameOccurrence = Table.RenameColumns(ExpandedFinal, {{"Occurrence", "Pull Count"}}),
 
     //////////////////////////////////////////////////////////////////////////
-    // STEP O: Reorder columns so that First Date Pulled is first, then Document Number, etc.
+    // STEP O: Reorder columns to include Pull Count
     //////////////////////////////////////////////////////////////////////////
     ReorderedColumns = Table.ReorderColumns(
-        RemoveTemp,
+        RenameOccurrence, // Changed source from RemoveTemp
         {
             "First Date Pulled",
             "Document Number",
@@ -255,6 +255,7 @@ let
             "User To Enter",
             "Document Amount",
             "Salesperson ID",
+            "Pull Count", // Added Pull Count
             "Historic Stage",
             "AutoStage",
             "AutoNote",
@@ -267,7 +268,7 @@ let
     // STEP P: Convert date columns to date type
     //////////////////////////////////////////////////////////////////////////
     DatesFixed = Table.TransformColumnTypes(
-        ReorderedColumns,
+        ReorderedColumns, // Source is correct (was ReorderedColumns)
         {
             {"First Date Pulled", type date},
             {"Document Date", type date}
@@ -278,7 +279,7 @@ let
     // STEP Q: Clean "Document Number" safely (avoid offset errors)
     //////////////////////////////////////////////////////////////////////////
     CleanDocNumber = Table.TransformColumns(
-        DatesFixed,
+        DatesFixed, // Source is correct (was DatesFixed)
         {
             {
                 "Document Number",
@@ -301,13 +302,13 @@ let
             }
         }
     ),
-    ChangedType = Table.TransformColumnTypes(CleanDocNumber, {{"Document Amount", Currency.Type}}),
+    ChangedType = Table.TransformColumnTypes(CleanDocNumber, {{"Document Amount", Currency.Type}}), // Source is correct (was CleanDocNumber)
 
     //////////////////////////////////////////////////////////////////////////
     // STEP R: Final sort: by First Date Pulled (oldest to newest) then Document Number (alphabetically)
     //////////////////////////////////////////////////////////////////////////
     FinalSorted = Table.Sort(
-        ChangedType,
+        ChangedType, // Source is correct (was ChangedType)
         {
             {"First Date Pulled", Order.Ascending},
             {"Document Number", Order.Ascending}
@@ -318,7 +319,7 @@ let
     // STEP S: Add Explicit Blank Row Filtering
     //////////////////////////////////////////////////////////////////////////
     RemoveBlankRows = Table.SelectRows(
-        FinalSorted,
+        FinalSorted, // Source is correct (was FinalSorted)
         each ([Document Number] <> null and [Document Number] <> "") and // Standard null/empty check
              ([Document Date] <> null or [Customer Name] <> null or [Document Amount] <> null)
     )

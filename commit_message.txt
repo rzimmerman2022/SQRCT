@@ -1,0 +1,11 @@
+Refactor: Optimize Ryan WB, fix blank rows, add text sheet, remove email col
+
+- Optimize `RefreshDashboard` in Ryan WB (`src/ryan_workbook/Module_Dashboard.bas`) using array-based approach for restoring user edits, significantly reducing cell interactions.
+- Optimize `LoadUserEditsToDictionary` in Ryan WB (`src/ryan_workbook/Module_Dashboard.bas`) to read only the DocNum column for dictionary creation.
+- Add logic to `RefreshDashboard` in Ryan WB to create/update "SQRCT Dashboard (Text-Only)" sheet with values, number formats, and reapplied conditional formatting colors (no formulas/protection/frozen panes).
+- Fix Power Query blank row issue in `src/power_query/Query - MasterQuotes_Final.pq` by correcting the filter function to use the standard null/empty check: `([Document Number] <> null and [Document Number] <> "")`.
+- Remove "Email Contact" column entirely from Ryan Workbook version:
+    - Updated `src/power_query/Query - CSVQuotes.pq` to remove column addition and reordering steps related to "Email Contact".
+    - Updated VBA constants in `src/ryan_workbook/Module_Dashboard.bas` and `src/ryan_workbook/Sheet2 (SQRCT Dashboard).cls` to comment out email-related constants and shift subsequent column references (UserEdits D-F, Dashboard M).
+    - Updated VBA functions (`SetupUserEditsSheet`, layout functions, `ProtectUserColumns`, `RefreshDashboard`, `SaveUserEditsFromDashboard`) in `src/ryan_workbook/Module_Dashboard.bas` to handle the removed column and adjusted ranges/indices (UserEdits now A-F, Dashboard now A-M).
+    - Updated `Worksheet_Change` in `src/ryan_workbook/Sheet2 (SQRCT Dashboard).cls` to reflect the column removal and shifts.

@@ -406,7 +406,9 @@ SkipRestore: ' Label to jump to if restore is skipped
 
     ' 12. Apply color conditional formatting (optional) & 13. Protect columns
     t_format = Timer
-    ApplyColorFormatting ws
+    ApplyColorFormatting ws ' This now only applies formatting to column K
+
+    ' ApplyColorFormatting ws ' This now only applies formatting to column K - CF for I cleared later
     ProtectUserColumns ws ' Protection is now applied at the end of this sub
     Debug.Print "Format/Protect Time: " & Timer - t_format
 
@@ -490,20 +492,23 @@ SkipRestore: ' Label to jump to if restore is skipped
     
     wsValues.Visible = xlSheetVisible ' Ensure it's visible
 
-    ' Copy data (Values and Number Formats) from main dashboard (Adjusted range A:M)
-    If lastRow >= 1 Then ' Ensure there's at least header data to copy
-        Set srcRange = ws.Range("A1:" & DB_COL_COMMENTS & lastRow) ' Include headers up to new Comments col M
+    ' Copy data (Values and Number Formats) from main dashboard, starting from header row 3 (Adjusted range A:M)
+    If lastRow >= 3 Then ' Ensure there's at least header data to copy
+        Set srcRange = ws.Range("A3:" & DB_COL_COMMENTS & lastRow) ' Start copy from row 3
         srcRange.Copy
-        wsValues.Range("A1").PasteSpecial Paste:=xlPasteValuesAndNumberFormats
+        wsValues.Range("A1").PasteSpecial Paste:=xlPasteValuesAndNumberFormats ' Paste starting at A1
         Application.CutCopyMode = False
-        LogUserEditsOperation "Pasted values & number formats to " & TEXT_ONLY_SHEET_NAME
-    End If
+        LogUserEditsOperation "Pasted headers & data (values/number formats) to " & TEXT_ONLY_SHEET_NAME
 
-    ' Re-apply conditional formatting colors
-    If lastRow >= 4 Then ' Only apply if there's data beyond headers
-       ApplyColorFormatting wsValues ' Apply to the new sheet
+    End If ' End of If lastRow >= 3 for copy/paste
+
+    ' Re-apply conditional formatting colors (Data now starts at row 2 on wsValues)
+    If lastRow >= 3 Then ' Apply if headers or data were copied (original sheet had row 3 or more)
+       ApplyColorFormatting wsValues, startDataRow:=2 ' Apply to the new sheet, indicating data starts row 2
        LogUserEditsOperation "Applied conditional formatting to " & TEXT_ONLY_SHEET_NAME
-    End If
+
+       ' CF for Column I on wsValues will be cleared just before Cleanup
+    End If ' End of If lastRow >= 3 for applying CF
     
     ' Final formatting for Text-Only sheet (Adjusted range A:M)
     wsValues.Columns("A:" & DB_COL_COMMENTS).AutoFit
@@ -520,6 +525,19 @@ SkipRestore: ' Label to jump to if restore is skipped
     LogUserEditsOperation "Formatted and unfroze panes on " & TEXT_ONLY_SHEET_NAME
     Debug.Print "Create Text-Only Sheet Time: " & Timer - t_textOnly
     ' --- End Action Item 3 ---
+
+    ' *** FINAL CLEANUP: Ensure Column I has NO conditional formatting on either sheet ***
+    On Error Resume Next ' Ignore errors if sheets don't exist or are already unprotected
+    ws.Unprotect
+    ws.Columns("I").FormatConditions.Delete
+    ws.Protect UserInterfaceOnly:=True, DrawingObjects:=True, Contents:=True, Scenarios:=True ' Re-protect main sheet
+
+    If Not wsValues Is Nothing Then
+        ' wsValues should already be unprotected, but clear CF just in case
+        wsValues.Columns("I").FormatConditions.Delete
+    End If
+    On Error GoTo ErrorHandler ' Restore default error handling
+    LogUserEditsOperation "Final cleanup: Ensured CF cleared from Pull Count column (I) on both sheets."
 
 Cleanup:
     Application.ScreenUpdating = True
@@ -952,7 +970,7 @@ Private Sub CleanupDashboardLayout(ws As Worksheet)
             "First Date Pulled", _
             "Salesperson ID", _
             "Entered By", _
-            "Occurrence Counter", _
+            "Pull Count", _
             "Missing Quote Alert", _
             "Engagement Phase", _
             "Last Contact Date", _
@@ -1022,7 +1040,7 @@ Private Sub InitializeDashboardLayout(ws As Worksheet)
             "First Date Pulled", _
             "Salesperson ID", _
             "Entered By", _
-            "Occurrence Counter", _
+            "Pull Count", _
             "Missing Quote Alert", _
             "Engagement Phase", _
             "Last Contact Date", _
@@ -1100,9 +1118,9 @@ Private Sub PopulateMasterQuotesData(ws As Worksheet)
         .Range("H4").Formula = _
             "=IF(A4<>"""",IFERROR(INDEX(" & sourceName & "[User To Enter],ROWS($A$4:A4)),""""),"""")"
 
-        ' I: Occurrence Counter (was Auto Stage)
+        ' I: Pull Count (was Occurrence Counter / AutoStage)
         .Range("I4").Formula = _
-            "=IF(A4<>"""",IFERROR(INDEX(" & sourceName & "[AutoStage],ROWS($A$4:A4)),""""),"""")"
+            "=IF(A4<>"""",IFERROR(INDEX(" & sourceName & "[Pull Count],ROWS($A$4:A4)),""""),"""")" ' Changed from AutoStage to Pull Count
 
         ' J: Missing Quote Alert (was Auto Note)
         .Range("J4").Formula = _
@@ -1309,11 +1327,11 @@ End Sub
 '===============================================================================
 ' PROTECTUSERCOLUMNS: Lock A-J, unlock K-M
 ' Adjusted for removed Email column
+' Removed initial Unprotect call (should be handled by caller)
 '===============================================================================
 Public Sub ProtectUserColumns(ws As Worksheet)
-    On Error Resume Next ' Ignore errors if sheet is already unprotected
-    ws.Unprotect ' Unprotect first
-    On Error GoTo 0 ' Resume default error handling
+    ' Assumes sheet is already unprotected by the calling procedure
+    On Error GoTo 0 ' Resume default error handling if previous On Error Resume Next was active
 
     ws.Cells.Locked = True
     ' Use constants for columns (Unlock K:M)
@@ -1326,36 +1344,52 @@ End Sub
 '===============================================================================
 ' APPLYCOLORFORMATTING: For coloring columns I (Occurrence) and K (Engagement)
 ' Adjusted range to K:M
+' Added startDataRow parameter for flexibility (e.g., Text-Only sheet)
+' Removed protection calls (should be handled by caller)
 '===============================================================================
-Public Sub ApplyColorFormatting(ws As Worksheet)
-    On Error Resume Next ' Ignore errors if sheet is already unprotected
-    ws.Unprotect ' Unprotect first
-    On Error GoTo 0 ' Resume default error handling
+Public Sub ApplyColorFormatting(ws As Worksheet, Optional startDataRow As Long = 4)
+    ' Assumes sheet is unprotected by the calling procedure
+    On Error GoTo 0 ' Resume default error handling if previous On Error Resume Next was active
 
-    ' Clear existing rules in I4:I1000 and K4:M1000 (Adjusted end column)
-    ws.Range("I4:I1000," & DB_COL_PHASE & "4:" & DB_COL_COMMENTS & "1000").FormatConditions.Delete ' Use Comments constant (M)
+    Dim endRow As Long
+    endRow = 10000 ' Use a sufficiently large row number
 
-    Dim rngOccur As Range, rngPhase As Range
-    Set rngOccur = ws.Range("I4:I1000")
-    Set rngPhase = ws.Range(DB_COL_PHASE & "4:" & DB_COL_COMMENTS & "1000") ' Use Comments constant (M)
+    ' Define the range for applying formatting based on startDataRow
+    Dim rngPhase As Range
+    Set rngPhase = ws.Range(DB_COL_PHASE & startDataRow & ":" & DB_COL_PHASE & endRow) ' Column K
 
-    ' Apply conditional formatting ONLY to the Engagement Phase column (K)
-    ' ApplyStageFormatting rngOccur ' Removed - Applying text rules to numeric Col I caused errors
-    ApplyStageFormatting ws.Range(DB_COL_PHASE & "4:" & DB_COL_PHASE & "1000") ' Apply only to Phase column K
+    ' Apply conditional formatting ONLY to the Engagement Phase (K) column.
+    ' CF for Column I is explicitly cleared in RefreshDashboard before this sub is called (for ws)
+    ' or after pasting (for wsValues). This sub only applies formatting to K.
+    ' The ApplyStageFormatting helper sub will clear existing rules from rngPhase first.
+    ApplyStageFormatting rngPhase
 
-    ' Re-protect, ensuring UserInterfaceOnly is True
-    ws.Protect UserInterfaceOnly:=True, DrawingObjects:=True, Contents:=True, Scenarios:=True
+    ' Protection is no longer handled here
 End Sub
 
 ' Helper for detailed color rules implementing the evidence-based color system
-Private Sub ApplyStageFormatting(rng As Range)
+' Applies formatting to targetRng based on the corresponding value in the Engagement Phase column (K).
+Private Sub ApplyStageFormatting(targetRng As Range)
+    If targetRng Is Nothing Then Exit Sub
+    If targetRng.Cells.Count = 0 Then Exit Sub
+
     Dim formulaBase As String
-    formulaBase = "=EXACT(" & rng.Cells(1).Address(False, False) & ",""{PHASE}"")"
+    Dim firstCell As Range
+    Dim referenceCellAddress As String
+
+    Set firstCell = targetRng.Cells(1) ' The first cell in the range being formatted (e.g., I2 or K2)
+    
+    ' Construct the address for the corresponding cell in the Engagement Phase column (K)
+    ' Needs absolute column ($K) and relative row (e.g., 2 for row 2)
+    referenceCellAddress = "$" & DB_COL_PHASE & firstCell.Row
+    
+    ' Formula now checks the value in the reference cell (column K)
+    formulaBase = "=EXACT(" & referenceCellAddress & ",""{PHASE}"")"
 
     ' Clear existing rules first to ensure a clean slate
-    rng.FormatConditions.Delete
+    targetRng.FormatConditions.Delete
 
-    With rng
+    With targetRng ' *** CORRECTED: Use targetRng parameter here ***
         ' --- Follow-up Stages (Sequential Process) ---
         ' First F/U: Light blue (#D0E6F5)
         .FormatConditions.Add Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "First F/U")
