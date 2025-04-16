@@ -252,7 +252,8 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     MsgBox IIf(PreserveUserEdits,
         DASHBOARD_SHEET_NAME & " refreshed!" & vbCrLf & USEREDITS_SHEET_NAME & " preserved.",
         DASHBOARD_SHEET_NAME & " refreshed!" & vbCrLf & "Edits saved & restored."
-    ), vbInformation, "Dashboard Refresh Complete"
+    ), _
+    vbInformation, "Dashboard Refresh Complete"
 
     Module_Dashboard_UserEdits.LogUserEditsOperation "Dashboard refresh completed successfully. Total time: " & Timer - t_start & "s"
 
