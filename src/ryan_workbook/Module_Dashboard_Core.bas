@@ -249,11 +249,14 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     ModernButton ws, "E2", "Preserve UserEdits", "Button_RefreshDashboard_PreserveUserEdits"
 
     ' 16) Final message
-    MsgBox IIf(PreserveUserEdits,
-        DASHBOARD_SHEET_NAME & " refreshed!" & vbCrLf & USEREDITS_SHEET_NAME & " preserved.",
-        DASHBOARD_SHEET_NAME & " refreshed!" & vbCrLf & "Edits saved & restored."
-    ), _
-    vbInformation, "Dashboard Refresh Complete"
+    Dim msgText As String
+    If PreserveUserEdits Then
+        msgText = DASHBOARD_SHEET_NAME & " refreshed!" & vbCrLf & USEREDITS_SHEET_NAME & " preserved."
+    Else
+        msgText = DASHBOARD_SHEET_NAME & " refreshed!" & vbCrLf & "Edits saved & restored."
+    End If
+    
+    MsgBox msgText, vbInformation, "Dashboard Refresh Complete"
 
     Module_Dashboard_UserEdits.LogUserEditsOperation "Dashboard refresh completed successfully. Total time: " & Timer - t_start & "s"
 
