@@ -135,7 +135,7 @@ let
         "Auto Note",
         each
             if ([Historic Stage] = null or Text.Trim([Historic Stage]) = "") then
-                if [MissingInLatest] then "No longer in pull—confirm converted/voided."
+                if [MissingInLatest] then "Confirm converted/voided."
                 else null
             else null,
         type text
@@ -326,3 +326,4 @@ let
 
 in
     RemoveBlankRows
+

@@ -2,7 +2,7 @@ Attribute VB_Name = "Module_Identity"
 Option Explicit
 
 ' ===============================================================================
-' WORKBOOK IDENTITY - Identifies which user's workbook this is
+' MODULE_IDENTITY - Identifies which user's workbook this is
 ' THIS CONSTANT MUST BE DIFFERENT IN EACH WORKBOOK:
 ' - Use "RZ" for Ryan's workbook
 ' - Use "AF" for Ally's workbook
