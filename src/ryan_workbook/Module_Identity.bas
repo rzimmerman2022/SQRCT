@@ -1,4 +1,3 @@
-Attribute VB_Name = "Module_Identity"
 Option Explicit
 
 ' ===============================================================================

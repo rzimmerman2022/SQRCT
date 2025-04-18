@@ -1,32 +1,332 @@
 Option Explicit
 
-' --- Constants ---
-Private Const DASHBOARD_SHEET_NAME As String = "SQRCT Dashboard"
-Private Const USEREDITS_SHEET_NAME As String = "UserEdits"
-Private Const USEREDITSLOG_SHEET_NAME As String = "UserEditsLog"
-Private Const TEXT_ONLY_SHEET_NAME As String = "SQRCT Dashboard (Text-Only)" ' For Text-Only copy
-Private Const MASTER_QUOTES_FINAL_SOURCE As String = "MasterQuotes_Final" ' PQ query/table for A-L
-Private Const PQ_LATEST_LOCATION_SHEET As String = "DocNum_LatestLocation" ' PQ output sheet for Workflow Location
-Private Const PQ_LATEST_LOCATION_TABLE As String = "DocNum_LatestLocation" ' PQ output table for Workflow Location
-Private Const PQ_DOCNUM_COL_NAME As String = "PrimaryDocNumber"         ' Source DocNum Column Header for Workflow
-Private Const PQ_LOCATION_COL_NAME As String = "MostRecent_FolderLocation" ' Source Location Column Header for Workflow
-Private Const UE_COL_DOCNUM As String = "A"
-Private Const UE_COL_PHASE As String = "B"
-Private Const UE_COL_LASTCONTACT As String = "C"
-Private Const UE_COL_COMMENTS As String = "D"
-Private Const UE_COL_SOURCE As String = "E"
-Private Const UE_COL_TIMESTAMP As String = "F"
-Private Const DB_COL_WORKFLOW_LOCATION As String = "J" ' Populated by PopulateWorkflowLocation from PQ_LATEST_LOCATION
-Private Const DB_COL_MISSING_QUOTE As String = "K" ' Populated from MasterQuotes_Final[AutoNote]
-Private Const DB_COL_PHASE As String = "L" ' Populated from MasterQuotes_Final[AutoStage] initially, then UserEdits
-Private Const DB_COL_LASTCONTACT As String = "M" ' Populated from UserEdits
-Private Const DB_COL_COMMENTS As String = "N" ' Populated from UserEdits
-Public Const DEBUG_WorkflowLocation As Boolean = False ' <<< SET TO TRUE FOR DEBUGGING WORKFLOW ONLY
+'============================================================
+'              MODULE-LEVEL CONSTANTS
+'============================================================
 
+' --- Workbook Protection ---
+' Make PUBLIC so modArchival can use it for sheet protection
+Public Const PW_WORKBOOK As String = ""   ' <--- ADD PASSWORD HERE IF ANY (Keep Public)
+
+' --- Sheet Names ---
+' Make DASHBOARD_SHEET_NAME Public for modArchival navigation
+Public Const DASHBOARD_SHEET_NAME As String = "SQRCT Dashboard"
+Public Const USEREDITS_SHEET_NAME As String = "UserEdits" ' Keep Private
+Private Const USEREDITSLOG_SHEET_NAME As String = "UserEditsLog" ' Keep Private
+Private Const TEXT_ONLY_SHEET_NAME As String = "SQRCT Dashboard (Text-Only)" ' Keep Private
+
+' --- Data Source Names ---
+Private Const MASTER_QUOTES_FINAL_SOURCE As String = "MasterQuotes_Final" ' Keep Private
+Private Const PQ_LATEST_LOCATION_SHEET As String = "DocNum_LatestLocation" ' Keep Private
+Private Const PQ_LATEST_LOCATION_TABLE As String = "DocNum_LatestLocation" ' Keep Private
+Private Const PQ_DOCNUM_COL_NAME As String = "PrimaryDocNumber" ' Keep Private
+Private Const PQ_LOCATION_COL_NAME As String = "MostRecent_FolderLocation" ' Keep Private
+
+' --- UserEdits Sheet Columns ---
+Public Const UE_COL_DOCNUM      As String = "A"
+Public Const UE_COL_PHASE       As String = "B"
+Public Const UE_COL_LASTCONTACT As String = "C"
+Public Const UE_COL_COMMENTS    As String = "D"
+Public Const UE_COL_SOURCE      As String = "E"
+Public Const UE_COL_TIMESTAMP   As String = "F"
+
+' --- Dashboard Column Letters (Corrected & Public where needed) ---
+' NOTE: J = Workflow, K = Missing Quote (User Confirmed Order)
+Public Const DB_COL_WORKFLOW_LOCATION As String = "J" ' PUBLIC needed for modArchival formatting call
+Public Const DB_COL_MISSING_QUOTE As String = "K" ' Keep Public for consistency or future use
+Public Const DB_COL_PHASE As String = "L" ' PUBLIC needed for modArchival filtering/formatting
+Public Const DB_COL_LASTCONTACT As String = "M" ' Keep Public for consistency or future use
+Public Const DB_COL_COMMENTS As String = "N" ' PUBLIC needed for modArchival range definitions
+
+' --- Debug Flags ---
+Public Const DEBUG_WorkflowLocation As Boolean = False ' Keep Public for easy access, set to False
 
 '===============================================================================
 '                         0. CORE HELPER ROUTINES
 '===============================================================================
+'------------------------------------------------------------------------------
+' BuildRowIndexDict - Builds CleanDocNum -> Sheet Row# dictionary for UserEdits
+' Specifically for Worksheet_Change event to find rows quickly.
+'------------------------------------------------------------------------------
+Public Function BuildRowIndexDict(ws As Worksheet) As Object
+    Dim dict As Object
+    Set dict = CreateObject("Scripting.Dictionary")
+    dict.CompareMode = vbTextCompare ' Case-insensitive keys
+
+    If ws Is Nothing Then
+        LogUserEditsOperation "BuildRowIndexDict: Worksheet object not provided."
+        Set BuildRowIndexDict = dict ' Return empty
+        Exit Function
+    End If
+
+    Dim lastR As Long, r As Long
+    Dim key As String
+
+    On Error Resume Next ' Handle errors getting last row or reading cells
+    lastR = ws.Cells(ws.rows.Count, UE_COL_DOCNUM).End(xlUp).Row
+    If Err.Number <> 0 Then
+        LogUserEditsOperation "BuildRowIndexDict: Error getting last row from '" & ws.Name & "'. " & Err.Description
+        Set BuildRowIndexDict = dict ' Return empty
+        Exit Function
+    End If
+    On Error GoTo 0 ' Restore default error handling for loop
+
+    If lastR >= 2 Then ' Headers are row 1
+        For r = 2 To lastR
+            key = CleanDocumentNumber(CStr(ws.Cells(r, UE_COL_DOCNUM).Value)) ' Use Public CleanDocumentNumber
+            If Len(key) > 0 Then
+                If Not dict.Exists(key) Then
+                     dict.Add key, r ' Key = Cleaned DocNum, Item = Row Number
+                ' Else: Keep first row found if duplicates exist
+                End If
+            End If
+        Next r
+    End If
+
+    LogUserEditsOperation "BuildRowIndexDict: Built dictionary with " & dict.Count & " row index entries for sheet '" & ws.Name & "'."
+    Set BuildRowIndexDict = dict
+End Function
+'------------------------------------------------------------------------------
+' ResolvePhase - Determines the correct Engagement Phase to display on dashboard
+'------------------------------------------------------------------------------
+Public Function ResolvePhase(ByVal historicStage As String, _
+                             ByVal autoStage As String, _
+                             ByVal userPhase As String, _
+                             ByVal dataSource As String) As String
+    ' Purpose: Prioritize UserEdits unless it's the specific "Legacy Process" placeholder
+    '          For Legacy source, fall back to HistoricStage if no valid UserEdit
+    '          For non-Legacy source, fall back to AutoStage if no valid UserEdit
+
+    Dim cleanUserPhase As String
+    cleanUserPhase = Trim$(userPhase)
+
+    ' Treat the specific placeholder text literally as "nothing entered by user"
+    If LCase$(cleanUserPhase) = "legacy process" Then cleanUserPhase = ""
+
+    ' Determine final phase based on DataSource
+    If LCase$(dataSource) = "legacy" Then
+        ' For legacy data source records:
+        If cleanUserPhase <> "" Then
+            ResolvePhase = cleanUserPhase    ' User entered a real override
+        Else
+            ResolvePhase = historicStage     ' No valid user edit, use the original Historic Stage
+        End If
+    Else
+        ' For non-legacy data source records (e.g., "CSV"):
+        If cleanUserPhase <> "" Then
+            ResolvePhase = cleanUserPhase    ' User entered an override
+        Else
+            ResolvePhase = autoStage         ' No valid user edit, use the calculated AutoStage
+        End If
+    End If
+
+End Function
+
+'------------------------------------------------------------------------------
+' RowIndexDictAdd - Helper to update Row Index Dictionary after adding new row
+'------------------------------------------------------------------------------
+Public Sub RowIndexDictAdd(ByRef dict As Object, ByVal key As String, ByVal rowNum As Long)
+    ' Adds item to dictionary only if key doesn't already exist
+    If dict Is Nothing Then Exit Sub
+    If Len(key) > 0 Then
+        If Not dict.Exists(key) Then
+            dict.Add key, rowNum
+        End If
+    End If
+End Sub
+'-------------------------------------------------------------------
+' Returns a Dictionary:  hdr("Document Amount") = 7   (etc.)
+' It tries the table first, then a named range.
+'-------------------------------------------------------------------
+Private Function GetMQF_HeaderMap() As Object
+    Dim d As Object: Set d = CreateObject("Scripting.Dictionary")
+    d.CompareMode = vbTextCompare
+    
+    Dim lo As ListObject, rng As Range, ws As Worksheet
+    Dim hdrRow As Variant, c As Long
+    
+    '–– 1) Table?
+    For Each ws In ThisWorkbook.Worksheets
+        On Error Resume Next
+        Set lo = ws.ListObjects(MASTER_QUOTES_FINAL_SOURCE)
+        On Error GoTo 0
+        If Not lo Is Nothing Then
+            hdrRow = lo.HeaderRowRange.Value
+            Exit For
+        End If
+    Next ws
+    
+    '–– 2) Named Range?
+    If lo Is Nothing Then
+        On Error Resume Next
+        Set rng = ThisWorkbook.Names(MASTER_QUOTES_FINAL_SOURCE).RefersToRange
+        On Error GoTo 0
+        If Not rng Is Nothing Then hdrRow = rng.rows(1).Value
+    End If
+    
+    '–– Build dictionary
+    If IsArray(hdrRow) Then
+        For c = 1 To UBound(hdrRow, 2)
+            If Trim$(hdrRow(1, c) & "") <> "" Then d(hdrRow(1, c)) = c
+        Next c
+    End If
+    
+    Set GetMQF_HeaderMap = d            ' May be empty – call-site checks
+End Function
+
+' Quick wrapper to fetch an index or raise a clear log + error
+Private Function MQFIdx(hdrMap As Object, hdrName As String, proc As String) As Long
+    If hdrMap.Exists(hdrName) Then
+        MQFIdx = hdrMap(hdrName)
+    Else
+        LogUserEditsOperation proc & ": REQUIRED column """ & hdrName & """ not found."
+        Err.Raise vbObjectError + 513, , proc & ": Missing column """ & hdrName & """"
+    End If
+End Function
+
+    '-------------------------------------------------------------------------------
+    ' GetTableOrRangeData
+    ' Reads data from an Excel Table (ListObject) or a Named Range into a 2D Variant Array.
+    ' Returns an empty array if source not found or empty.
+    '-------------------------------------------------------------------------------
+    Private Function GetTableOrRangeData(SourceName As String) As Variant
+        Dim lo As ListObject
+        Dim rng As Range
+        Dim ws As Worksheet
+        Dim dataArray As Variant
+        Dim sourceFound As Boolean
+
+        ' Default to an empty array (specifically, Variant/Empty)
+        GetTableOrRangeData = VBA.Array() ' Use VBA.Array() to return an empty variant
+
+        On Error Resume Next ' Allow checking for objects without halting
+
+        ' Check for Table (ListObject) on any sheet
+        Set lo = Nothing: Err.Clear
+        For Each ws In ThisWorkbook.Worksheets
+            Set lo = ws.ListObjects(SourceName)
+            If Err.Number = 0 And Not lo Is Nothing Then Exit For ' Found it
+        Next ws
+
+        If Not lo Is Nothing Then
+            ' Source is a Table
+            If Not lo.DataBodyRange Is Nothing Then
+                If lo.ListRows.Count > 0 Then
+                    dataArray = lo.DataBodyRange.Value2 ' Use Value2 for performance
+                    sourceFound = True
+                End If
+            End If
+            LogUserEditsOperation "GetTableOrRangeData: Read " & lo.ListRows.Count & " rows from Table '" & SourceName & "'."
+        Else
+            ' Check for Named Range if not found as Table
+            Set rng = Nothing: Err.Clear
+            Set rng = ThisWorkbook.Names(SourceName).RefersToRange
+            If Err.Number = 0 And Not rng Is Nothing Then
+                 ' Source is a Named Range - assume data starts from first row
+                 If Application.WorksheetFunction.CountA(rng) > 0 Then ' Basic check if range has any data
+                     If rng.rows.Count > 0 And rng.Columns.Count > 0 Then
+                         dataArray = rng.Value2 ' Use Value2
+                         sourceFound = True
+                     End If
+                 End If
+                 LogUserEditsOperation "GetTableOrRangeData: Read data from Named Range '" & SourceName & "'."
+            End If
+        End If
+
+        On Error GoTo 0 ' Restore default error handling
+
+        If sourceFound Then
+            ' Ensure result is always a 2D array, even if only one row/column was read
+            If Not IsArray(dataArray) Then
+                 ' Handle single cell case
+                 Dim tempData(1 To 1, 1 To 1) As Variant
+                 tempData(1, 1) = dataArray
+                 GetTableOrRangeData = tempData
+            ElseIf LBound(dataArray, 1) > UBound(dataArray, 1) Then
+                 ' Handle empty array from range read (rare case)
+                 GetTableOrRangeData = VBA.Array()
+            ElseIf UBound(dataArray, 1) >= LBound(dataArray, 1) And UBound(dataArray, 2) = 1 Then
+                 ' Handle single column case - already 2D by default when read from range
+                 GetTableOrRangeData = dataArray
+            ElseIf UBound(dataArray, 1) = 1 And UBound(dataArray, 2) > 1 Then
+                 ' Handle single row case - Reading Range.Value2 usually returns 2D (1 to 1, 1 to N)
+                 GetTableOrRangeData = dataArray
+            Else
+                 ' Standard 2D array
+                 GetTableOrRangeData = dataArray
+            End If
+        Else
+            LogUserEditsOperation "GetTableOrRangeData: Source '" & SourceName & "' not found or empty."
+            ' Return the empty array initialized at the start
+        End If
+
+    End Function
+
+    '-------------------------------------------------------------------------------
+    ' BuildDictionaryFromArray
+    ' Creates a Scripting Dictionary from a 2D array.
+    ' KeyColIndex: 1-based index of the column in the array to use for dictionary Keys.
+    ' ValueColIndex: 1-based index of the column for dictionary Items.
+    ' Uses CleanDocumentNumber on keys if useCleanKey is True.
+    ' Handles potential errors gracefully.
+    '-------------------------------------------------------------------------------
+    Private Function BuildDictionaryFromArray(InputArray As Variant, KeyColIndex As Long, ValueColIndex As Long, Optional UseCleanKey As Boolean = False) As Object
+        Dim dict As Object
+        Set dict = CreateObject("Scripting.Dictionary")
+        dict.CompareMode = vbTextCompare ' Default to case-insensitive keys
+
+        Dim r As Long
+        Dim keyVal As String
+        Dim itemVal As Variant
+
+        If Not IsArray(InputArray) Then
+            LogUserEditsOperation "BuildDictionaryFromArray: Input is not a valid array."
+            Set BuildDictionaryFromArray = dict ' Return empty dictionary
+            Exit Function
+        End If
+        ' Check if array actually has data rows
+        If LBound(InputArray, 1) > UBound(InputArray, 1) Then
+             LogUserEditsOperation "BuildDictionaryFromArray: Input array is empty."
+             Set BuildDictionaryFromArray = dict ' Return empty dictionary
+             Exit Function
+        End If
+
+
+        On Error Resume Next ' Handle potential errors like array bounds
+
+        For r = LBound(InputArray, 1) To UBound(InputArray, 1) ' Use LBound/UBound for safety
+            If KeyColIndex > UBound(InputArray, 2) Or ValueColIndex > UBound(InputArray, 2) Then
+                LogUserEditsOperation "BuildDictionaryFromArray: Key or Value column index out of bounds for array size (" & UBound(InputArray, 2) & ")."
+                Set BuildDictionaryFromArray = dict ' Return potentially partially built dict
+                Exit Function ' Stop processing if indices are invalid
+            End If
+
+            If UseCleanKey Then
+                keyVal = CleanDocumentNumber(CStr(InputArray(r, KeyColIndex)))
+            Else
+                keyVal = Trim$(CStr(InputArray(r, KeyColIndex)))
+            End If
+
+            itemVal = InputArray(r, ValueColIndex)
+
+            If keyVal <> "" Then
+                If Not dict.Exists(keyVal) Then
+                    dict.Add keyVal, itemVal
+                Else
+                    ' Handle duplicate keys if necessary - default keeps the first found
+                    ' LogUserEditsOperation "BuildDictionaryFromArray: Duplicate key '" & keyVal & "' found at array row " & r & ". Keeping first value."
+                End If
+            End If
+        Next r
+
+        If Err.Number <> 0 Then
+            LogUserEditsOperation "BuildDictionaryFromArray: Error during dictionary build: " & Err.Description
+            Err.Clear
+        End If
+        On Error GoTo 0 ' Restore default
+
+        Set BuildDictionaryFromArray = dict
+    End Function
 
 '------------------------------------------------------------------------------
 ' CleanDocumentNumber - Standardizes DocNum for matching.
@@ -105,63 +405,97 @@ Public Sub LogUserEditsOperation(msg As String)
     On Error GoTo 0
 End Sub
 
-'------------------------------------------------------------------------------
-' LoadUserEditsToDictionary – Builds Doc# -> SheetRow dictionary from UserEdits
-' Uses CleanDocumentNumber for keys.
-' *** Using robust version ***
-'------------------------------------------------------------------------------
-Public Function LoadUserEditsToDictionary(wsEdits As Worksheet) As Object
-    Dim dict As Object
-    Set dict = CreateObject("Scripting.Dictionary")
-    dict.CompareMode = vbTextCompare ' Use case-insensitive comparison for dictionary keys
+    '------------------------------------------------------------------------------
+    ' LoadUserEditsToDictionary (MODIFIED)
+    ' Reads UserEdits sheet, builds Dictionary mapping CleanDocNum -> Array(Phase, Contact, Comments).
+    '------------------------------------------------------------------------------
+    Public Function LoadUserEditsToDictionary() As Object ' Removed wsEdits parameter, uses constant
+        Dim dict As Object
+        Set dict = CreateObject("Scripting.Dictionary")
+        dict.CompareMode = vbTextCompare ' Use case-insensitive comparison
 
-    If wsEdits Is Nothing Then
-        LogUserEditsOperation "LoadUserEditsDict: UserEdits sheet object is Nothing."
-        Set LoadUserEditsToDictionary = dict ' Return empty dictionary
-        Exit Function
-    End If
+        Dim wsEdits As Worksheet
+        Dim lastRow As Long
+        Dim dataArray As Variant
+        Dim r As Long
+        Dim cleanedDocNum As String
+        Dim userEditValues(0 To 2) As Variant ' Array to hold Phase, Contact, Comments
 
-    Dim lastRow As Long, r As Long
-    Dim rawDocNum As String, cleanedDocNum As String
-    Dim addedCount As Long, duplicateCount As Long, skippedCount As Long
+        ' Get UserEdits sheet reference
+        On Error Resume Next
+        Set wsEdits = ThisWorkbook.Sheets(USEREDITS_SHEET_NAME)
+        On Error GoTo 0 ' Restore error handling for main sub logic
+        If wsEdits Is Nothing Then
+            LogUserEditsOperation "LoadUserEditsToDictionary: UserEdits sheet '" & USEREDITS_SHEET_NAME & "' not found."
+            Set LoadUserEditsToDictionary = dict ' Return empty dictionary
+            Exit Function
+        End If
 
-    On Error Resume Next ' Handle error if sheet is protected or other access issues
-    lastRow = wsEdits.Cells(wsEdits.rows.Count, UE_COL_DOCNUM).End(xlUp).Row
-    If Err.Number <> 0 Then
-        LogUserEditsOperation "LoadUserEditsDict: Error finding last row on '" & wsEdits.Name & "'. Error: " & Err.Description
-        Set LoadUserEditsToDictionary = dict ' Return empty dictionary
-        Exit Function
-    End If
-    On Error GoTo 0 ' Restore default error handling for this sub
+        ' Find last row with data in DocNum column
+        lastRow = wsEdits.Cells(wsEdits.rows.Count, UE_COL_DOCNUM).End(xlUp).Row
 
-    LogUserEditsOperation "LoadUserEditsDict: Checking UserEdits sheet '" & wsEdits.Name & "' rows 2 through " & lastRow & "."
+        If lastRow <= 1 Then
+            LogUserEditsOperation "LoadUserEditsToDictionary: No data found on UserEdits sheet."
+            Set LoadUserEditsToDictionary = dict ' Return empty dictionary
+            Exit Function
+        End If
 
-    If lastRow > 1 Then ' Only process if there are potential data rows
-        For r = 2 To lastRow ' Loop through actual data rows
-            rawDocNum = CStr(wsEdits.Cells(r, UE_COL_DOCNUM).Value) ' Get raw value from UserEdits Col A
-            cleanedDocNum = CleanDocumentNumber(rawDocNum)         ' Clean it using the helper function
+        ' Read relevant columns (A to D) into an array for speed
+        On Error Resume Next
+        dataArray = wsEdits.Range(UE_COL_DOCNUM & "2:" & UE_COL_COMMENTS & lastRow).Value2 ' Read A:D
+        If Err.Number <> 0 Then
+             LogUserEditsOperation "LoadUserEditsToDictionary: Error reading data from UserEdits sheet: " & Err.Description
+             Set LoadUserEditsToDictionary = dict ' Return empty dictionary
+             Exit Function
+        End If
+        On Error GoTo 0
 
-            If cleanedDocNum <> "" Then ' Only process if cleaning results in a non-empty string
-                If Not dict.Exists(cleanedDocNum) Then
-                    dict.Add key:=cleanedDocNum, Item:=r ' Key = Cleaned DocNum, Item = Sheet Row Number
-                    addedCount = addedCount + 1
-                Else
-                    duplicateCount = duplicateCount + 1
-                    ' Log duplicates but keep the first one found
-                    ' LogUserEditsOperation "LoadUserEditsDict: WARNING - Duplicate CLEANED DocNum '" & cleanedDocNum & "' found at UserEdits row " & r & ". Keeping mapping to first occurrence (Row " & dict(cleanedDocNum) & ")."
-                End If
-            Else
-                skippedCount = skippedCount + 1
-            End If
-        Next r
-        LogUserEditsOperation "LoadUserEditsDict: Processed " & lastRow - 1 & " rows. Added: " & addedCount & ", Duplicates Ignored: " & duplicateCount & ", Skipped (Blank): " & skippedCount & "."
-    Else
-       LogUserEditsOperation "LoadUserEditsDict: No data rows found on UserEdits sheet (lastRow=" & lastRow & ")."
-    End If
+        ' Process the array
+        If IsArray(dataArray) Then
+             ' Check if it's a 2D array (multiple rows) or 1D (single row)
+             Dim is2D As Boolean
+             On Error Resume Next
+             Dim checkBound As Long: checkBound = UBound(dataArray, 2)
+             is2D = (Err.Number = 0)
+             On Error GoTo 0
 
-    Set LoadUserEditsToDictionary = dict ' Return the populated (or empty) dictionary
-End Function
+             If is2D Then ' Multiple rows read
+                 For r = 1 To UBound(dataArray, 1) ' Loop through rows of the array
+                     cleanedDocNum = CleanDocumentNumber(CStr(dataArray(r, 1))) ' Col 1 = DocNum (from Col A)
 
+                     If cleanedDocNum <> "" Then
+                         If Not dict.Exists(cleanedDocNum) Then
+                            ' Store Phase (Col B -> Array Index 2), LastContact (Col C -> 3), Comments (Col D -> 4)
+                            userEditValues(0) = dataArray(r, 2) ' Phase
+                            userEditValues(1) = dataArray(r, 3) ' Last Contact
+                            userEditValues(2) = dataArray(r, 4) ' Comments
+                            dict.Add key:=cleanedDocNum, Item:=userEditValues ' Store the array as the item
+                         Else
+                            ' Log duplicate cleaned key if needed
+                         End If
+                     End If
+                 Next r
+                 LogUserEditsOperation "LoadUserEditsToDictionary: Processed " & UBound(dataArray, 1) & " rows from UserEdits sheet."
+             Else ' Single row of data read (returned as 1D array)
+                 cleanedDocNum = CleanDocumentNumber(CStr(dataArray(1))) ' Index 1 = DocNum
+                 If cleanedDocNum <> "" Then
+                     If Not dict.Exists(cleanedDocNum) Then
+                         userEditValues(0) = dataArray(2) ' Phase
+                         userEditValues(1) = dataArray(3) ' Last Contact
+                         userEditValues(2) = dataArray(4) ' Comments
+                         dict.Add key:=cleanedDocNum, Item:=userEditValues
+                         LogUserEditsOperation "LoadUserEditsToDictionary: Processed 1 row from UserEdits sheet."
+                     End If
+                 End If
+             End If
+        Else
+            ' Handle case where only one cell was read (unlikely for A:D but safe)
+            LogUserEditsOperation "LoadUserEditsToDictionary: Read only single value, expected array."
+            ' Cannot process further
+        End If
+
+        Set LoadUserEditsToDictionary = dict ' Return the dictionary
+    End Function
 
 '------------------------------------------------------------------------------
 ' IsMasterQuotesFinalPresent - Checks if the source exists (PQ, Table, or NR)
@@ -213,6 +547,159 @@ ExitPoint_IsPresent:
     Set lo = Nothing: Set nm = Nothing: Set queryObj = Nothing: Set ws = Nothing: Set tempRange = Nothing
 End Function
 
+'-------------------------------------------------------------------------------
+' BuildDashboardDataArray (REFACTORED v3 - Using Header Map & ResolvePhase)
+' Loads data from PQ sources and UserEdits into memory, merges them,
+' and returns a 1-based 2D Variant array formatted for SQRCT Dashboard (A:N).
+' Uses GetMQF_HeaderMap/MQFIdx helpers for robustness against column reordering.
+' Uses ResolvePhase helper to handle Engagement Phase logic correctly.
+' *** ORDER: J=Workflow Location, K=Missing Quote Alert ***
+'-------------------------------------------------------------------------------
+Private Function BuildDashboardDataArray() As Variant
+    ' --- Declare Variables ---
+    Dim arrQuotes As Variant        ' From MasterQuotes_Final source
+    Dim arrLoc As Variant           ' From DocNum_LatestLocation source
+    Dim dictLoc As Object           ' Lookup: CleanDocNum -> Location
+    Dim dictUserEdits As Object     ' Lookup: CleanDocNum -> Array(Phase, Contact, Comments)
+    Dim arrOutput() As Variant      ' Final output array (1-based, 14 columns)
+    Dim hdrMap As Object            ' Dictionary mapping Header Name -> Source Column Index
+    Dim r As Long, numRows As Long  ' Loop counter, row count
+    Dim cleanedDocNum As String, rawDocNum As String
+    Dim editData As Variant         ' Temp array for user edits
+    Dim startTime As Double: startTime = Timer
+    Dim i As Long                   ' Generic loop counter
+
+    '--- Column Indices for Location data (Still using fixed indices for this source) ---
+    Const LOC_IDX_DOCNUM As Long = 1
+    Const LOC_IDX_LOCATION As Long = 2
+
+    LogUserEditsOperation "BuildDashboardDataArray (Header Map + ResolvePhase): Starting..."
+
+    '--- STEP 1: Get Header Map for MasterQuotes_Final source ---
+    Set hdrMap = GetMQF_HeaderMap() ' Calls helper function
+    If hdrMap Is Nothing Or hdrMap.Count = 0 Then
+        LogUserEditsOperation "BuildDashboardDataArray: CRITICAL - Could not build header map for MasterQuotes_Final. Aborting."
+        GoTo Fail_Build ' Use GoTo for failure exit
+    End If
+
+    '--- STEP 2: Dynamically Get Column Indices using Header Names ---
+    '    MQFIdx helper function returns 0 and logs error if header not found.
+    Dim IDX_DOCNUM As Long:      IDX_DOCNUM = MQFIdx(hdrMap, "Document Number", "BuildDashboardDataArray")
+    Dim IDX_CUSTNUM As Long:     IDX_CUSTNUM = MQFIdx(hdrMap, "Customer Number", "BuildDashboardDataArray")
+    Dim IDX_CUSTNAME As Long:    IDX_CUSTNAME = MQFIdx(hdrMap, "Customer Name", "BuildDashboardDataArray")
+    Dim IDX_DOCAMT As Long:      IDX_DOCAMT = MQFIdx(hdrMap, "Document Amount", "BuildDashboardDataArray")
+    Dim IDX_DOCDATE As Long:     IDX_DOCDATE = MQFIdx(hdrMap, "Document Date", "BuildDashboardDataArray")
+    Dim IDX_FIRSTPULL As Long:   IDX_FIRSTPULL = MQFIdx(hdrMap, "First Date Pulled", "BuildDashboardDataArray")
+    Dim IDX_SPID As Long:        IDX_SPID = MQFIdx(hdrMap, "Salesperson ID", "BuildDashboardDataArray")
+    Dim IDX_USERENTER As Long:   IDX_USERENTER = MQFIdx(hdrMap, "User To Enter", "BuildDashboardDataArray")
+    Dim IDX_PULLCOUNT As Long:   IDX_PULLCOUNT = MQFIdx(hdrMap, "Pull Count", "BuildDashboardDataArray")
+    Dim IDX_AUTONOTE As Long:    IDX_AUTONOTE = MQFIdx(hdrMap, "AutoNote", "BuildDashboardDataArray")      ' Source for K (Missing Quote)
+    Dim IDX_AUTOSTAGE As Long:   IDX_AUTOSTAGE = MQFIdx(hdrMap, "AutoStage", "BuildDashboardDataArray")    ' Default for L (Phase)
+    Dim IDX_DATASOURCE As Long:  IDX_DATASOURCE = MQFIdx(hdrMap, "DataSource", "BuildDashboardDataArray") ' Needed for ResolvePhase
+    Dim IDX_HISTORICSTAGE As Long: IDX_HISTORICSTAGE = MQFIdx(hdrMap, "Historic Stage", "BuildDashboardDataArray") ' Needed for ResolvePhase
+
+    '--- Check if any essential index lookup failed ---
+    If IDX_DOCNUM = 0 Or IDX_CUSTNUM = 0 Or IDX_CUSTNAME = 0 Or IDX_DOCAMT = 0 Or _
+       IDX_DOCDATE = 0 Or IDX_FIRSTPULL = 0 Or IDX_SPID = 0 Or IDX_USERENTER = 0 Or _
+       IDX_PULLCOUNT = 0 Or IDX_AUTONOTE = 0 Or IDX_AUTOSTAGE = 0 Or _
+       IDX_DATASOURCE = 0 Or IDX_HISTORICSTAGE = 0 Then
+            LogUserEditsOperation "BuildDashboardDataArray: CRITICAL - One or more required headers not found in MasterQuotes_Final source via header map. Aborting."
+            GoTo Fail_Build
+    End If
+    '--- End Header Map Lookup ---
+
+    ' --- STEP 3: Load Data ---
+    arrQuotes = GetTableOrRangeData(MASTER_QUOTES_FINAL_SOURCE)
+    arrLoc = GetTableOrRangeData(PQ_LATEST_LOCATION_TABLE)
+    Set dictUserEdits = LoadUserEditsToDictionary() ' Uses refactored version returning arrays
+
+    ' --- STEP 4: Validate arrQuotes Array State ---
+    If Not IsArray(arrQuotes) Then GoTo Fail_Build ' Array not returned
+    If LBound(arrQuotes, 1) > UBound(arrQuotes, 1) Then GoTo Fail_Build ' Array has no rows
+    ' No column count check needed here - handled by MQFIdx checks above
+    numRows = UBound(arrQuotes, 1)
+    LogUserEditsOperation "BuildDashboardDataArray: Loaded " & numRows & " rows from MasterQuotes_Final."
+
+    ' --- STEP 5: Build Location Dictionary ---
+    Set dictLoc = BuildDictionaryFromArray(arrLoc, LOC_IDX_DOCNUM, LOC_IDX_LOCATION, True) ' Uses indices
+    LogUserEditsOperation "BuildDashboardDataArray: Built Location Dictionary with " & dictLoc.Count & " entries."
+    LogUserEditsOperation "BuildDashboardDataArray: Loaded User Edits Dictionary with " & dictUserEdits.Count & " entries."
+
+    ' --- STEP 6: Prepare Output Array (1 to numRows, 1 to 14 corresponding to A:N) ---
+    ReDim arrOutput(1 To numRows, 1 To 14)
+
+    ' --- STEP 7: Loop through Source Data and Merge ---
+    Dim currentHistoricStage As String
+    Dim currentAutoStage As String
+    Dim currentUserPhase As String
+    Dim currentDataSource As String
+
+    For r = 1 To numRows
+        ' Get Cleaned Document Number Key using dynamic index
+        rawDocNum = CStr(arrQuotes(r, IDX_DOCNUM))
+        cleanedDocNum = CleanDocumentNumber(rawDocNum)
+
+        ' Populate A-I directly using dynamic indices
+        arrOutput(r, 1) = rawDocNum
+        arrOutput(r, 2) = arrQuotes(r, IDX_CUSTNUM)
+        arrOutput(r, 3) = arrQuotes(r, IDX_CUSTNAME)
+        arrOutput(r, 4) = arrQuotes(r, IDX_DOCAMT)
+        arrOutput(r, 5) = arrQuotes(r, IDX_DOCDATE)
+        arrOutput(r, 6) = arrQuotes(r, IDX_FIRSTPULL)
+        arrOutput(r, 7) = arrQuotes(r, IDX_SPID)
+        arrOutput(r, 8) = arrQuotes(r, IDX_USERENTER)
+        arrOutput(r, 9) = arrQuotes(r, IDX_PULLCOUNT)
+
+        ' Populate J (Workflow Location) using lookup (Index 10)
+        If dictLoc.Exists(cleanedDocNum) Then
+            arrOutput(r, 10) = dictLoc(cleanedDocNum)
+            If Len(Trim(CStr(arrOutput(r, 10)))) = 0 Then arrOutput(r, 10) = "Quote Only"
+        Else
+            arrOutput(r, 10) = "Quote Only"
+        End If
+
+        ' Populate K (Missing Quote Alert) from AutoNote using dynamic index (Index 11)
+        arrOutput(r, 11) = arrQuotes(r, IDX_AUTONOTE)
+
+        ' Populate L-N using ResolvePhase logic
+        ' Get values needed for ResolvePhase from the source array
+        currentHistoricStage = CStr(arrQuotes(r, IDX_HISTORICSTAGE))
+        currentAutoStage = CStr(arrQuotes(r, IDX_AUTOSTAGE))
+        currentDataSource = CStr(arrQuotes(r, IDX_DATASOURCE))
+
+        ' Get User Edit Phase if it exists, otherwise pass blank
+        If dictUserEdits.Exists(cleanedDocNum) Then
+            editData = dictUserEdits(cleanedDocNum) ' Retrieve the array(Phase, Contact, Comments)
+            currentUserPhase = CStr(editData(0))
+            ' Populate M and N directly from UserEdits if present
+            arrOutput(r, 13) = editData(1) ' M: UserEdit LastContact
+            arrOutput(r, 14) = editData(2) ' N: UserEdit Comments
+        Else
+            currentUserPhase = "" ' No user edit exists for Phase
+            ' Set default blanks for M and N if no user edit found
+            arrOutput(r, 13) = vbNullString ' M: Default LastContact (Blank)
+            arrOutput(r, 14) = vbNullString ' N: Default Comments (Blank)
+        End If
+
+        ' Call helper function to determine final Phase for Column L (Index 12)
+        arrOutput(r, 12) = ResolvePhase(currentHistoricStage, currentAutoStage, currentUserPhase, currentDataSource)
+
+    Next r
+
+    LogUserEditsOperation "BuildDashboardDataArray: Merge complete. Time: " & Format(Timer - startTime, "0.00") & "s"
+    BuildDashboardDataArray = arrOutput ' Return the final array
+    Exit Function ' Successful exit
+
+Fail_Build: ' Label for failure exits
+    LogUserEditsOperation "BuildDashboardDataArray: ERROR - Failed to load or validate source data. Returning False."
+    BuildDashboardDataArray = False ' Indicate failure by returning False (Variant/Boolean)
+    ' Ensure objects are cleaned up even on failure
+    Set hdrMap = Nothing
+    Set dictLoc = Nothing
+    Set dictUserEdits = Nothing
+End Function
+
+    
 
 '===============================================================================
 '              1. DASHBOARD CREATION / REFRESH MASTER ROUTINE
@@ -234,34 +721,47 @@ End Sub
 
 '------------------------------------------------------------------------------
 ' RefreshDashboard — Master routine orchestrating the entire refresh
-' *** Incorporating functional fixes into user's preferred structure ***
+' *** REFACTORED to use in-memory array/dictionary merge for data population ***
 '------------------------------------------------------------------------------
 Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
 
     Dim ws As Worksheet, wsEdits As Worksheet
-    Dim lastRow As Long, lastRowEdits As Long
-    Dim t_Start As Double, t_Populate As Double, t_Sort As Double, t_Freeze As Double
-    Dim t_Workflow As Double, t_Restore As Double, t_Format As Double, t_TextOnly As Double ' Timers
-    Dim userEditsDict As Object ' Dictionary for lookup
+    Dim lastRow As Long ' Last row *on the dashboard sheet* after writing data
+    Dim t_Start As Double, t_Build As Double, t_Write As Double, t_Sort As Double
+    Dim t_Format As Double, t_Protect As Double, t_TextOnly As Double ' Timers
     Dim backupCreated As Boolean
     Dim calcState As XlCalculation: calcState = Application.Calculation ' Store current calculation state
     Dim eventsState As Boolean: eventsState = Application.EnableEvents ' Store current event state
     Dim currentSheet As Worksheet: Set currentSheet = ActiveSheet ' Remember active sheet
+    Dim arrFinalData As Variant ' Array to hold the merged data for the dashboard
+    Dim wbWasLocked As Boolean
 
     t_Start = Timer ' Start overall timer
     LogUserEditsOperation "--------------------------------------------------"
-    LogUserEditsOperation "Starting Dashboard Refresh. Mode: " & IIf(PreserveUserEdits, "PreserveUserEdits", "SaveAndRestore")
-
-    ' --- Attempt pre-emptive backup ---
-    backupCreated = CreateUserEditsBackup("RefreshDashboard_" & Format(Now, "yyyymmdd_hhmmss"))
-    LogUserEditsOperation "Pre-refresh UserEdits backup created: " & backupCreated
+    LogUserEditsOperation "Starting Dashboard Refresh (Refactored). Mode: " & IIf(PreserveUserEdits, "PreserveUserEdits", "SaveAndRestore")
 
     ' --- Error Handling & Application Settings ---
     On Error GoTo ErrorHandler ' Master error handler for the refresh process
     Application.ScreenUpdating = False
     Application.EnableEvents = False ' Turn off events during manipulation
-    Application.Calculation = xlCalculationManual ' Manual calculation for speed
-    Application.DisplayAlerts = False ' Suppress alerts like overwrite confirmations
+    Application.Calculation = xlCalculationManual ' Manual calculation still good practice during VBA execution
+    Application.DisplayAlerts = False ' Suppress alerts
+
+    ' --- Check & Handle Workbook Structure Protection ---
+    wbWasLocked = ThisWorkbook.ProtectStructure ' Check if currently protected
+    If wbWasLocked Then
+        LogUserEditsOperation "RefreshDashboard: Workbook structure is protected. Attempting temporary unlock..."
+        If Not ToggleWorkbookStructure(False) Then ' Call helper to Unlock Structure
+            ' ToggleWorkbookStructure already logs the error if it fails
+            MsgBox "Failed to unprotect workbook structure. Required for creating backup/log/setup sheets. Aborting.", vbCritical, "Structure Protection Error"
+            GoTo Cleanup ' Abort if unlock fails
+        End If
+    End If
+    ' Structure is now guaranteed to be unprotected (or was already)
+
+    ' --- Attempt pre-emptive backup ---
+    backupCreated = CreateUserEditsBackup(Format(Now, "yyyymmdd_hhmmss")) ' Pass ONLY timestamp as suffix
+    LogUserEditsOperation "Pre-refresh UserEdits backup created: " & backupCreated
 
     '--- STEP 1: Ensure UserEdits Sheet Exists and Get Reference ---
     SetupUserEditsSheet ' Creates or verifies the UserEdits sheet structure
@@ -277,7 +777,7 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     '--- STEP 2: Save Current Dashboard Edits (L-N) to UserEdits (if not preserving) ---
     If Not PreserveUserEdits Then
         LogUserEditsOperation "SaveAndRestore Mode: Saving current dashboard edits (L-N) to UserEdits sheet..."
-        SaveUserEditsFromDashboard ' Saves L-N from Dashboard to UserEdits A-F
+        SaveUserEditsFromDashboard ' Saves L-N from Dashboard to UserEdits A-F using corrected version
         LogUserEditsOperation "Finished saving dashboard edits."
     Else
         LogUserEditsOperation "PreserveUserEdits Mode: Skipping save of dashboard edits."
@@ -291,50 +791,60 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     End If
 
     On Error Resume Next ' Ignore error if already unprotected
-    ws.Unprotect
+    ws.Unprotect ' Unprotect the DASHBOARD SHEET for updates
     On Error GoTo ErrorHandler ' Restore error handler
 
-    CleanupDashboardLayout ws    ' Uses user's preferred version - Clears rows 4+, ensures Rows 1-3 exist
-    InitializeDashboardLayout ws ' Uses user's preferred version - Sets headers A-N and initial widths
+    CleanupDashboardLayout ws    ' Clears rows 4+ data, preserves rows 1-3
+    InitializeDashboardLayout ws ' Sets headers A-N, ensures N4+ WrapText=False, etc.
 
-    '--- STEP 4: Populate Dashboard Columns A-L from MasterQuotes_Final ---
-    LogUserEditsOperation "Populating dashboard columns A-L from '" & MASTER_QUOTES_FINAL_SOURCE & "'..."
-    t_Populate = Timer
-    If IsMasterQuotesFinalPresent Then
-        ' *** Using robust PopulateMasterQuotesData sub ***
-        PopulateMasterQuotesData ws ' Fills A-I (Core), K (AutoNote), L (AutoStage for Legacy) using formulas
+    '--- STEP 4 (NEW): Build Final Data Array In Memory ---
+    LogUserEditsOperation "Building final data array in memory..."
+    t_Build = Timer
+    arrFinalData = BuildDashboardDataArray() ' Calls the new function
+
+    ' Check if BuildDashboardDataArray returned a valid array
+    If Not IsArray(arrFinalData) Then
+         LogUserEditsOperation "BuildDashboardDataArray failed to return valid data. Aborting."
+         MsgBox "Critical error building dashboard data array. Please check logs or source data.", vbCritical, "Refresh Aborted"
+         GoTo Cleanup
+    End If
+    ' Check if array has at least one dimension (LBound will error on empty Variant)
+    Dim arrIsEmpty As Boolean
+    On Error Resume Next
+    arrIsEmpty = (LBound(arrFinalData, 1) > UBound(arrFinalData, 1))
+    On Error GoTo ErrorHandler ' Restore main handler
+    If arrIsEmpty Then
+         LogUserEditsOperation "BuildDashboardDataArray returned empty data array. Dashboard will be empty."
+         ' Allow proceeding to show an empty dashboard
+    End If
+    LogUserEditsOperation "Finished building data array. Time: " & Format(Timer - t_Build, "0.00") & "s"
+
+    '--- STEP 5 (NEW): Write Data Array to Dashboard ---
+    LogUserEditsOperation "Writing data array to dashboard sheet..."
+    t_Write = Timer
+    ' Clear target area first
+    ws.Range("A4:" & DB_COL_COMMENTS & ws.rows.Count).ClearContents
+    If Not arrIsEmpty Then ' Check if array has rows before writing
+        ' Write the entire array in one operation
+        ws.Range("A4").Resize(UBound(arrFinalData, 1), UBound(arrFinalData, 2)).Value = arrFinalData
+        LogUserEditsOperation "Finished writing " & UBound(arrFinalData, 1) & " rows to dashboard."
     Else
-        LogUserEditsOperation "WARNING: Source '" & MASTER_QUOTES_FINAL_SOURCE & "' not found. Dashboard columns A-L will be empty."
-        MsgBox "Warning: Data source '" & MASTER_QUOTES_FINAL_SOURCE & "' not found." & vbCrLf & _
-               "Dashboard columns A-L cannot be populated.", vbExclamation, "Data Source Missing"
+         LogUserEditsOperation "Skipping write to dashboard (data array was empty)."
     End If
-    LogUserEditsOperation "Finished populating A-L. Time: " & Format(Timer - t_Populate, "0.00") & "s"
+    LogUserEditsOperation "Finished writing data. Time: " & Format(Timer - t_Write, "0.00") & "s"
 
-    ' Get last row *after* populating A-L
+    ' --- STEP 6: Calculate Last Row and Sort Dashboard Data ---
+    ' Get last row *after* writing data values
     lastRow = ws.Cells(ws.rows.Count, "A").End(xlUp).Row
-    LogUserEditsOperation "Dashboard has " & IIf(lastRow < 4, 0, lastRow - 3) & " data rows after initial population (Row " & lastRow & ")."
+    LogUserEditsOperation "Dashboard now has " & IIf(lastRow < 4, 0, lastRow - 3) & " data rows (Row " & lastRow & ")."
 
-    '--- STEP 5: Freeze Formulas (A-L) to Values *BEFORE* Sorting ---
-    If lastRow >= 4 Then
-        LogUserEditsOperation "Freezing formulas to values for columns A through L..."
-        t_Freeze = Timer
-        On Error Resume Next ' Handle potential errors during conversion
-        With ws.Range("A4:" & DB_COL_PHASE & lastRow) ' Range A:L includes new Phase column
-            .Value = .Value ' Convert formulas to static values
-        End With
-        If Err.Number <> 0 Then
-             LogUserEditsOperation "Warning: Error during formula-to-value conversion (A:L): " & Err.Description
-             Err.Clear ' Clear error and continue
-        End If
-        On Error GoTo ErrorHandler ' Restore main error handler
-        LogUserEditsOperation "Finished freezing formulas. Time: " & Format(Timer - t_Freeze, "0.00") & "s"
-    End If
+    ' (REMOVED: ws.Calculate - No longer needed)
+    ' (REMOVED: Formula freezing (.Value=.Value) - No longer needed)
 
-    '--- STEP 6: Sort Dashboard Data ---
     If lastRow >= 5 Then ' Need at least 2 data rows to sort meaningfully
         LogUserEditsOperation "Sorting dashboard rows 4:" & lastRow & "..."
         t_Sort = Timer
-        SortDashboardData ws, lastRow ' Uses user's preferred version
+        SortDashboardData ws, lastRow ' Sorts the values written to the sheet
         LogUserEditsOperation "Finished sorting. Time: " & Format(Timer - t_Sort, "0.00") & "s"
     Else
         LogUserEditsOperation "Skipping sort (less than 2 data rows)."
@@ -342,87 +852,82 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     ' Recalculate lastRow *after* sorting
     lastRow = ws.Cells(ws.rows.Count, "A").End(xlUp).Row
 
-    '--- STEP 7: Populate Workflow Location (Column J) ---
-    If lastRow >= 4 Then
-        LogUserEditsOperation "Populating Workflow Location (Column J)..."
-        t_Workflow = Timer
-        PopulateWorkflowLocation ws, lastRow ' Uses version with DEBUG toggle
-        LogUserEditsOperation "Finished Workflow Location. Time: " & Format(Timer - t_Workflow, "0.00") & "s"
-    Else
-         LogUserEditsOperation "Skipping Workflow Location population (no data rows)."
+    ' (REMOVED: PopulateWorkflowLocation - Handled by BuildDashboardDataArray)
+    ' (REMOVED: RestoreUserEditsToDashboard - Handled by BuildDashboardDataArray)
+
+    '--- STEP 7: Apply Final Column Widths and Header Row Height ---
+    LogUserEditsOperation "Applying final column widths (AutoFit A:M, Re-AutoFit D/E/F, Constrain C/D, Fixed F/N, Fixed Row3)..."
+    t_Format = Timer ' Start timer for formatting section
+    Application.ScreenUpdating = False ' Keep off for formatting
+    On Error Resume Next ' Local error handling
+
+    ' 7.1: Initial AutoFit for ALL data columns (A through M - N is fixed later)
+    ws.Columns("A:" & DB_COL_LASTCONTACT).AutoFit ' AutoFit A through M
+
+    ' 7.2: Explicitly Re-AutoFit Amount and Date columns D, E, F
+    ws.Columns("D").AutoFit
+    ws.Columns("E").AutoFit
+    ws.Columns("F").AutoFit
+
+    ' 7.3: NOW, impose constraints on Button/Amount columns (C and D)
+    Const MIN_BUTTON_WIDTH As Double = 20
+    Const MAX_BUTTON_WIDTH As Double = 30
+
+    ' -- Constrain Column C (Button 1) --
+    If ws.Columns("C").ColumnWidth < MIN_BUTTON_WIDTH Then ws.Columns("C").ColumnWidth = MIN_BUTTON_WIDTH
+    If ws.Columns("C").ColumnWidth > MAX_BUTTON_WIDTH Then ws.Columns("C").ColumnWidth = MAX_BUTTON_WIDTH
+    ' -- Constrain Column D (Button 2 / Amount) --
+    If ws.Columns("D").ColumnWidth < MIN_BUTTON_WIDTH Then ws.Columns("D").ColumnWidth = MIN_BUTTON_WIDTH
+    If ws.Columns("D").ColumnWidth > MAX_BUTTON_WIDTH Then ws.Columns("D").ColumnWidth = MAX_BUTTON_WIDTH
+
+    ' 7.4: Set FIXED width for Column F (First Date Pulled) - Override AutoFit
+    ws.Columns("F").ColumnWidth = 10.5   ' Keep date column compact
+
+    ' 7.5: Set FIXED width for Comments column N
+    ws.Columns(DB_COL_COMMENTS).ColumnWidth = 45 ' Fixed width for Comments (N)
+
+    ' 7.6: Set FIXED height and NO WRAP/NO SHRINK for Header Row 3
+    With ws.rows(3)
+        .RowHeight = 15       ' Set standard height
+        .WrapText = False     ' Ensure header doesn't wrap
+    End With
+    ws.Range("A3:" & DB_COL_COMMENTS & "3").ShrinkToFit = False ' Ensure ShrinkToFit is OFF
+
+    ' Error Check & Restore
+    If Err.Number <> 0 Then
+        LogUserEditsOperation "WARNING: Error during column/row formatting adjustments: " & Err.Description
+        Err.Clear
     End If
+    On Error GoTo ErrorHandler ' Restore main error handler
+    Application.ScreenUpdating = True ' Turn back on if needed before next step
+    LogUserEditsOperation "Finished final column/row formatting. Time: " & Format(Timer - t_Format, "0.00") & "s"
 
-        '--- STEP 8: Restore UserEdits (L-N) from UserEdits Sheet ---
-        LogUserEditsOperation "Restoring UserEdits (Phase/Contact/Comments) to dashboard columns L-N..."
-        t_Restore = Timer
-        RestoreUserEditsToDashboard ws, wsEdits, lastRow
-        LogUserEditsOperation "Finished UserEdits restoration. Time: " & Format(Timer - t_Restore, "0.00") & "s"
 
-' *** REVISED STEP 8.5: AutoFit A:M THEN Set Fixed/Minimum Widths ***
-        LogUserEditsOperation "Applying AutoFit to columns A:M then setting fixed/minimums..."
-        Application.ScreenUpdating = False ' Ensure it's off
-        On Error Resume Next ' Ignore errors during formatting
+    '--- STEP 8: Apply Conditional Formatting, Protection and Freeze Panes ---
+    LogUserEditsOperation "Applying conditional formatting and protection..."
+    t_Protect = Timer ' Use separate timer if desired
+    If lastRow >= 4 Then
+        ApplyColorFormatting ws, 4          ' Uses DB_COL_PHASE = "L"
+        ApplyWorkflowLocationFormatting ws, 4 ' Uses DB_COL_WORKFLOW_LOCATION = "J" (Uses Constant)
+    End If
+    ProtectUserColumns ws ' Uses DB_COL_PHASE/DB_COL_COMMENTS (L:N) for unlocking
+    FreezeDashboard ws
+    LogUserEditsOperation "Finished formatting/protection. Time: " & Format(Timer - t_Protect, "0.00") & "s"
+    
+    ' >>> ADD THIS LINE <<<
+    modArchival.RefreshAllViews        ' rebuild Active / Archive snapshots
+    ' >>> ADD THIS LINE <<<
 
-        ' 1. AutoFit Columns A through M only
-        ws.Columns("A:" & DB_COL_LASTCONTACT).AutoFit ' AutoFit A-M (DB_COL_LASTCONTACT is M)
+    '--- STEP 9: Final UI Updates (Timestamp, Buttons) ---
+    SetupDashboardUI_EndRefresh ws ' Places buttons in C2, D2
 
-        ' 2. NOW, enforce MINIMUM widths AFTER AutoFit for button columns C, D, E
-        If ws.Columns("C").ColumnWidth < 20 Then ws.Columns("C").ColumnWidth = 20 ' Min width for C
-        If ws.Columns("D").ColumnWidth < 5 Then ws.Columns("D").ColumnWidth = 5   ' Min width for D
-        If ws.Columns("E").ColumnWidth < 20 Then ws.Columns("E").ColumnWidth = 20 ' Min width for E
-
-        ' 3. Set FIXED width for Comments column N AFTER AutoFit of other columns
-        ws.Columns(DB_COL_COMMENTS).ColumnWidth = 45 ' Set Fixed width for Comments (N) - Adjust 45 if needed
-
-        ' 4. Optional: Apply specific FIXED widths AFTER AutoFit for other columns if desired
-        ' ws.Columns("A").ColumnWidth = 15 ' DocNum
-
-        If Err.Number <> 0 Then LogUserEditsOperation "WARNING: Error during AutoFit/Width Setting.": Err.Clear
-        On Error GoTo ErrorHandler ' Restore main handler
-        Application.ScreenUpdating = True
-        LogUserEditsOperation "Finished column AutoFit and width adjustments (N fixed)."
-        ' *** END REVISED STEP 8.5 ***
-
-        ' 1. AutoFit ALL columns first to adjust to content
-        ws.Columns("A:" & DB_COL_COMMENTS).AutoFit ' AutoFit A-N
-
-        ' 2. NOW, enforce MINIMUM widths for columns C, D, E AFTER AutoFit
-        '    Adjust these minimums if needed based on your font/button size
-        If ws.Columns("C").ColumnWidth < 20 Then ws.Columns("C").ColumnWidth = 20 ' Min width for C (Base for Button 1)
-        If ws.Columns("D").ColumnWidth < 5 Then ws.Columns("D").ColumnWidth = 5   ' Min width for D (Spacer)
-        If ws.Columns("E").ColumnWidth < 20 Then ws.Columns("E").ColumnWidth = 20 ' Min width for E (Base for Button 2)
-
-        ' 3. Optional: Set specific FIXED widths AFTER AutoFit for other columns if desired
-        ' ws.Columns("N").ColumnWidth = 40 ' Example: Ensure Comments is wide enough
-
-        If Err.Number <> 0 Then LogUserEditsOperation "WARNING: Error during AutoFit/Width Setting for A:N.": Err.Clear
-        On Error GoTo ErrorHandler ' Restore main handler
-        Application.ScreenUpdating = True
-        LogUserEditsOperation "Finished column AutoFit and minimum width adjustments."
-        ' *** END REVISED STEP 8.5 ***
-
-        '--- STEP 9: Apply Formatting and Protection ---
-        ' (Rest of the code remains the same)
-        LogUserEditsOperation "Applying formatting and protection..."
-        t_Format = Timer
-        If lastRow >= 4 Then
-            ApplyColorFormatting ws, 4
-            ApplyWorkflowLocationFormatting ws, 4
-        End If
-        ProtectUserColumns ws
-        FreezeDashboard ws
-        LogUserEditsOperation "Finished formatting/protection. Time: " & Format(Timer - t_Format, "0.00") & "s"
-
-        '--- STEP 10: Final UI Updates (Timestamp, Buttons) ---
-        SetupDashboardUI_EndRefresh ws
-
-    '--- STEP 11: Create/Update Text-Only Copy ---
+    '--- STEP 10: Create/Update Text-Only Copy ---
     LogUserEditsOperation "Creating/Updating Text-Only dashboard copy..."
     t_TextOnly = Timer
-    CreateOrUpdateTextOnlySheet ws ' Use reviewed version
+    CreateOrUpdateTextOnlySheet ws ' Uses reviewed version
     LogUserEditsOperation "Finished Text-Only copy. Time: " & Format(Timer - t_TextOnly, "0.00") & "s"
 
-    '--- STEP 12: Completion Message & Cleanup ---
+    '--- STEP 11: Completion Message & Cleanup ---
     Dim msgText As String
     If PreserveUserEdits Then
         msgText = DASHBOARD_SHEET_NAME & " refreshed successfully!" & vbCrLf & vbCrLf & _
@@ -431,7 +936,7 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     Else
         msgText = DASHBOARD_SHEET_NAME & " refreshed successfully!" & vbCrLf & vbCrLf & _
                   "Edits made on the dashboard were saved to '" & USEREDITS_SHEET_NAME & "'." & vbCrLf & _
-                  "All edits were then restored to the dashboard."
+                  "All data (including User Edits) was merged and displayed." ' Updated message slightly
     End If
     Application.DisplayAlerts = True ' Re-enable alerts before showing message box
     MsgBox msgText, vbInformation, "Dashboard Refresh Complete"
@@ -444,6 +949,14 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
 
 Cleanup: ' Label for normal exit and error exit cleanup
     On Error Resume Next ' Prevent errors during cleanup itself
+
+    ' >>> Re-lock Workbook Structure if it was locked initially <<<
+    If wbWasLocked Then
+        LogUserEditsOperation "Cleanup: Re-locking workbook structure (if previously locked)..."
+        Call ToggleWorkbookStructure(True)
+    End If
+    ' >>> End Re-lock <<<
+
     ' --- Restore Application Settings ---
     Application.ScreenUpdating = True
     Application.Calculation = calcState ' Restore original calculation state
@@ -452,7 +965,8 @@ Cleanup: ' Label for normal exit and error exit cleanup
     ' --- Release Object Variables ---
     Set ws = Nothing
     Set wsEdits = Nothing
-    Set userEditsDict = Nothing
+    If IsArray(arrFinalData) Then Erase arrFinalData
+
     ' Activate the original sheet if it was changed
     If Not currentSheet Is Nothing Then
         If ActiveSheet.Name <> currentSheet.Name Then currentSheet.Activate
@@ -498,447 +1012,10 @@ ErrorHandler: ' Master error handler
 End Sub
 
 
+
 '================================================================================
 '              2. CORE DATA POPULATION & RESTORATION SUB-ROUTINES
 '================================================================================
-
-'------------------------------------------------------------------------------
-' PopulateMasterQuotesData - Fills Dashboard A-L from MasterQuotes_Final Source
-' Handles Table or Named Range source. Populates K from [AutoNote], L from [AutoStage].
-' *** Using robust version ***
-'------------------------------------------------------------------------------
-Private Sub PopulateMasterQuotesData(ws As Worksheet)
-    If ws Is Nothing Then Exit Sub
-
-    Dim sourceNameInput As String: sourceNameInput = MASTER_QUOTES_FINAL_SOURCE
-    Dim sourceReference As String ' How source is referenced in formulas (Table Name or Sheet!Range)
-    Dim isTable As Boolean: isTable = False
-    Dim isNamedRange As Boolean: isNamedRange = False
-    Dim sourceHeaderRow As Long
-    Dim dataStartRowOffset As Long ' Usually 1 for Tables/Named Ranges with headers
-    Dim colMap As Object ' Dictionary to map header names -> column index for Named Ranges
-    Dim lastMasterRow As Long ' Number of data rows in the source
-    Dim targetRowCount As Long ' Number of rows to populate on dashboard
-
-    Dim PopulateErrorHandler As String ' Declare error handler label variable
-    PopulateErrorHandler = "PopulateErrorHandler" ' Assign string name
-
-    On Error GoTo PopulateErrorHandler_Handler ' Use named error handler
-
-    Dim sourceTable As ListObject
-    Dim sourceRange As Range
-
-    ' --- Determine Source Type and Validate ---
-    Set sourceTable = Nothing: On Error Resume Next
-    Dim tempWs As Worksheet
-    For Each tempWs In ThisWorkbook.Worksheets
-        Set sourceTable = tempWs.ListObjects(sourceNameInput)
-        If Not sourceTable Is Nothing Then Exit For
-    Next tempWs
-    isTable = Not sourceTable Is Nothing
-    On Error GoTo PopulateErrorHandler_Handler ' Restore error handler
-
-    If isTable Then
-        ' --- Source is a TABLE ---
-        LogUserEditsOperation "PopulateMasterQuotesData: Source '" & sourceNameInput & "' found as a Table on sheet '" & sourceTable.Parent.Name & "'."
-        If sourceTable.DataBodyRange Is Nothing Then
-             LogUserEditsOperation "PopulateMasterQuotesData: Source Table has no data rows."
-             GoTo SourceEmpty_Handler ' Use named handler
-        End If
-        On Error Resume Next ' Check row count safely
-        lastMasterRow = sourceTable.ListRows.Count
-        If Err.Number <> 0 Or lastMasterRow = 0 Then Err.Clear: GoTo SourceEmpty_Handler ' Use named handler
-        On Error GoTo PopulateErrorHandler_Handler ' Restore error handler
-        sourceReference = sourceNameInput ' Use Table name directly in INDEX formula
-        sourceHeaderRow = sourceTable.HeaderRowRange.Row
-        dataStartRowOffset = 1 ' Data starts 1 row below header in a table
-    Else
-        ' --- Check if source is a NAMED RANGE ---
-        Set sourceRange = Nothing: On Error Resume Next
-        Set sourceRange = ThisWorkbook.Names(sourceNameInput).RefersToRange
-        isNamedRange = (Err.Number = 0 And Not sourceRange Is Nothing)
-        On Error GoTo PopulateErrorHandler_Handler ' Restore error handler
-
-        If isNamedRange Then
-            LogUserEditsOperation "PopulateMasterQuotesData: Source '" & sourceNameInput & "' found as a Named Range on sheet '" & sourceRange.Parent.Name & "'."
-            ' Assume header is in the first row of the named range
-            sourceHeaderRow = sourceRange.Row
-            dataStartRowOffset = 1
-            ' Count non-blank cells in first column to estimate rows (including header)
-            On Error Resume Next
-            Dim totalRowsInRange As Long
-            totalRowsInRange = Application.WorksheetFunction.CountA(sourceRange.Columns(1))
-             If Err.Number <> 0 Or totalRowsInRange <= dataStartRowOffset Then Err.Clear: GoTo SourceEmpty_Handler ' Use named handler
-            On Error GoTo PopulateErrorHandler_Handler ' Restore error handler
-            lastMasterRow = totalRowsInRange - dataStartRowOffset ' Actual data rows = Total - Header rows
-
-            ' Use qualified Sheet!Range address for INDEX with Named Ranges
-            sourceReference = "'" & sourceRange.Worksheet.Name & "'!" & sourceRange.Address(True, True)
-
-            ' Build header map (Header Name -> Column Index) for the Named Range
-            Set colMap = CreateObject("Scripting.Dictionary")
-            colMap.CompareMode = vbTextCompare ' Case-insensitive header matching
-            Dim headerData As Variant: headerData = sourceRange.rows(1).Value
-            Dim c As Long
-            If IsArray(headerData) Then
-                For c = 1 To UBound(headerData, 2)
-                    If Not IsEmpty(headerData(1, c)) Then colMap(CStr(headerData(1, c))) = c
-                Next c
-            ElseIf Not IsEmpty(headerData) Then ' Single column range
-                colMap(CStr(headerData)) = 1
-            End If
-            LogUserEditsOperation "PopulateMasterQuotesData: Built header map for Named Range. Found " & colMap.Count & " columns."
-            ' Check if essential columns exist in the map
-            ' *** Relaxed check - will handle missing columns in loop ***
-            If Not colMap.Exists("Document Number") Then
-                 LogUserEditsOperation "PopulateMasterQuotesData: ERROR - Required column 'Document Number' not found in Named Range headers."
-                 GoTo SourceInvalid_Handler ' Use named handler
-            End If
-        Else
-            ' --- Source Not Found or Invalid ---
-             LogUserEditsOperation "PopulateMasterQuotesData: ERROR - Source '" & sourceNameInput & "' not found as a Table or a valid Named Range."
-             GoTo SourceInvalid_Handler ' Use named handler
-        End If
-    End If
-
-    ' --- Final Row Count Check ---
-    targetRowCount = lastMasterRow
-    If targetRowCount <= 0 Then GoTo SourceEmpty_Handler ' Use named handler
-    LogUserEditsOperation "PopulateMasterQuotesData: Source contains " & targetRowCount & " data rows to populate."
-
-    ' --- Populate Dashboard A-L with Formulas ---
-    Application.Calculation = xlCalculationManual ' Ensure calc is off
-
-    Dim colHeadersNeeded As Variant
-    colHeadersNeeded = Array("Document Number", "Customer Number", "Customer Name", "Document Amount", _
-                           "Document Date", "First Date Pulled", "Salesperson ID", "User To Enter", _
-                           "Pull Count", "AutoNote", "AutoStage", "DataSource") ' Include DataSource for Col L logic
-    Dim dashColsTarget As Variant
-    dashColsTarget = Array("A", "B", "C", "D", "E", "F", "G", "H", "I", DB_COL_MISSING_QUOTE, DB_COL_PHASE) ' A-I, K, L
-    Dim isNumeric As Variant ' Flags for --INDEX conversion
-    isNumeric = Array(False, False, False, True, True, True, False, False, True, False, False) ' D,E,F,I are numeric/date
-
-    Dim i As Long, formula As String, sourceColName As String, targetCol As String
-    Dim colRef As String, colNum As Long
-
-    With ws
-        For i = LBound(colHeadersNeeded) To UBound(colHeadersNeeded) - 1 ' Loop through needed headers (excluding DataSource)
-             sourceColName = colHeadersNeeded(i)
-             targetCol = dashColsTarget(i) ' Corresponding dashboard column A-I, K, L
-             formula = "" ' Reset formula for each column
-
-             ' --- Determine Column Reference Syntax (Table vs Named Range) & Check Existence ---
-             If isTable Then
-                 On Error Resume Next
-                 Dim listCol As ListColumn: Set listCol = Nothing
-                 Set listCol = sourceTable.ListColumns(sourceColName)
-                 If Err.Number <> 0 Or listCol Is Nothing Then
-                     LogUserEditsOperation "PopulateMasterQuotesData: WARNING - Column '" & sourceColName & "' not found in Table source. Skipping dashboard column " & targetCol & "."
-                     Err.Clear
-                     GoTo NextColumn_Handler ' Skip if column doesn't exist
-                 End If
-                 On Error GoTo PopulateErrorHandler_Handler ' Restore handler
-                 colRef = "[" & sourceColName & "]" ' Table syntax [Column Name]
-             Else ' isNamedRange
-                 If colMap.Exists(sourceColName) Then
-                     colNum = colMap(sourceColName)
-                     colRef = "," & colNum ' Named Range syntax uses ,ColNum for INDEX
-                 Else
-                     LogUserEditsOperation "PopulateMasterQuotesData: WARNING - Column '" & sourceColName & "' not found in Named Range source headers. Skipping dashboard column " & targetCol & "."
-                     GoTo NextColumn_Handler ' Skip if header not found
-                 End If
-             End If
-
-             ' --- Construct Base INDEX Formula ---
-             If isTable Then
-                 formula = "=IFERROR(INDEX(" & sourceReference & colRef & ",ROWS($A$4:A4)),"""")"
-             Else ' isNamedRange
-                 formula = "=IFERROR(INDEX(" & sourceReference & ",ROWS($A$4:A4)+" & dataStartRowOffset - 1 & colRef & "),"""")"
-             End If
-
-             ' --- Apply Special Logic / Formatting ---
-             If isNumeric(i) Then formula = Replace$(formula, "INDEX", "--INDEX")
-
-             If targetCol = DB_COL_PHASE Then ' Special logic for Column L (Phase)
-                 Dim dataSourceColRef As String: dataSourceColRef = ""
-                 Dim dsColNum As Long: dsColNum = 0
-                 Dim listColDS As ListColumn: Set listColDS = Nothing
-
-                 If isTable Then
-                     On Error Resume Next
-                     Set listColDS = sourceTable.ListColumns("DataSource")
-                     If Err.Number = 0 And Not listColDS Is Nothing Then dataSourceColRef = "[DataSource]"
-                     Err.Clear
-                     On Error GoTo PopulateErrorHandler_Handler
-                 Else ' isNamedRange
-                     If colMap.Exists("DataSource") Then
-                        dsColNum = colMap("DataSource")
-                        dataSourceColRef = ",ROWS($A$4:A4)+" & dataStartRowOffset - 1 & "," & dsColNum
-                     End If
-                 End If
-
-                 If dataSourceColRef <> "" Or dsColNum > 0 Then
-                    Dim dataSourceIndexPart As String
-                    If isTable Then
-                        dataSourceIndexPart = "INDEX(" & sourceReference & dataSourceColRef & ",ROWS($A$4:A4))"
-                    Else ' isNamedRange
-                        dataSourceIndexPart = "INDEX(" & sourceReference & dataSourceColRef & ")"
-                    End If
-                    formula = "=IF(" & dataSourceIndexPart & "=""LEGACY""," & Mid$(formula, 2) & ","""")" ' Insert IF condition
-                 Else
-                      LogUserEditsOperation "PopulateMasterQuotesData: WARNING - 'DataSource' column needed for Column L logic not found. Column L formula cleared."
-                      formula = "" ' Clear formula if DataSource is missing
-                 End If
-             End If
-
-             ' Add outer IF(A4<>"",...) wrapper for columns B onwards
-             If targetCol <> "A" And formula <> "" Then
-                  formula = "=IF(A4<>""""," & Mid$(formula, 2) & ","""")"
-             End If
-
-             ' --- Write Formula to Target Column ---
-             If formula <> "" Then
-                 On Error Resume Next
-                 .Range(targetCol & "4").Resize(targetRowCount, 1).formula = formula
-                 If Err.Number <> 0 Then
-                     LogUserEditsOperation "ERROR writing formula for column " & targetCol & ": " & Err.Description & " Formula: " & formula
-                     Err.Clear
-                 End If
-                 On Error GoTo PopulateErrorHandler_Handler
-             End If
-
-NextColumn_Handler: ' Label to jump to for skipping a column
-        Next i
-
-        ' --- Apply Basic Formatting ---
-        On Error Resume Next
-        .Range("D4").Resize(targetRowCount).NumberFormat = "$#,##0.00"   ' Amount (D)
-        .Range("E4").Resize(targetRowCount).NumberFormat = "mm/dd/yyyy" ' Document Date (E)
-        .Range("F4").Resize(targetRowCount).NumberFormat = "mm/dd/yyyy" ' First Date Pulled (F)
-        .Range("I4").Resize(targetRowCount).NumberFormat = "0"           ' Pull Count (I) - Integer
-        On Error GoTo PopulateErrorHandler_Handler ' Use named handler
-
-    End With ' ws
-
-    LogUserEditsOperation "PopulateMasterQuotesData: Finished applying formulas for A-L."
-    GoTo Cleanup_Populate ' Go to cleanup
-
-SourceEmpty_Handler:
-    LogUserEditsOperation "PopulateMasterQuotesData: Source '" & sourceNameInput & "' is empty. No data populated for A-L."
-    GoTo Cleanup_Populate
-SourceInvalid_Handler:
-    LogUserEditsOperation "PopulateMasterQuotesData: Source '" & sourceNameInput & "' is invalid or missing required columns. No data populated for A-L."
-    GoTo Cleanup_Populate
-PopulateErrorHandler_Handler:
-    LogUserEditsOperation "ERROR in PopulateMasterQuotesData: [" & Err.Number & "] " & Err.Description & " (Line: " & Erl & ")"
-    ' Decide if error is fatal - maybe re-raise or allow RefreshDashboard handler to catch
-Cleanup_Populate:
-    On Error Resume Next ' Prevent error during cleanup
-    Set colMap = Nothing: Set sourceTable = Nothing: Set sourceRange = Nothing
-    Set listCol = Nothing: Set listColDS = Nothing: Set tempWs = Nothing
-    Set headerData = Nothing ' Release variant array
-    ' Resume Next ' Uncomment this if you want execution to continue in RefreshDashboard after an error here
-End Sub
-
-'------------------------------------------------------------------------------
-' PopulateWorkflowLocation – Fills Dashboard J from DocNum_LatestLocation PQ
-' Silent unless DEBUG_WorkflowLocation = True
-' *** Using robust version ***
-'------------------------------------------------------------------------------
-Private Sub PopulateWorkflowLocation(ws As Worksheet, lastRowDash As Long)
-    If lastRowDash < 4 Then Exit Sub ' No data rows on dashboard
-
-    Dim wsPQ As Worksheet, tbl As ListObject
-    Dim dict As Object ' Dictionary: CleanedDocNum -> Location
-    Dim arr As Variant, pqDataRange As Range
-    Dim r As Long, i As Long
-    Dim colDoc As Long, colLoc As Long
-    Dim key As String, loc As String
-    Dim t_Start As Double: t_Start = Timer
-    Dim foundCount As Long, notFoundCount As Long
-
-    LogUserEditsOperation "PopulateWorkflowLocation: Starting update for Column J."
-
-    ' --- Get Source Table ---
-    On Error Resume Next
-    Set wsPQ = Nothing: Set tbl = Nothing
-    Set wsPQ = ThisWorkbook.Sheets(PQ_LATEST_LOCATION_SHEET)
-    If wsPQ Is Nothing Then
-        LogUserEditsOperation "PopulateWorkflowLocation: ERROR - Source sheet '" & PQ_LATEST_LOCATION_SHEET & "' not found."
-        Exit Sub
-    End If
-    Set tbl = wsPQ.ListObjects(PQ_LATEST_LOCATION_TABLE)
-    If tbl Is Nothing Then Set tbl = wsPQ.ListObjects(1) ' Fallback to first table
-    On Error GoTo 0 ' Restore default error handling
-
-    If tbl Is Nothing Then
-        LogUserEditsOperation "PopulateWorkflowLocation: ERROR - Source table '" & PQ_LATEST_LOCATION_TABLE & "' (or first table) not found on sheet '" & wsPQ.Name & "'."
-        Exit Sub
-    End If
-    LogUserEditsOperation "PopulateWorkflowLocation: Found source table '" & tbl.Name & "' on sheet '" & wsPQ.Name & "'."
-
-    ' --- Build Lookup Dictionary ---
-    Set dict = CreateObject("Scripting.Dictionary")
-    dict.CompareMode = vbTextCompare ' Case-insensitive keys
-
-    On Error Resume Next ' Handle errors reading table data / finding columns
-    Set pqDataRange = tbl.DataBodyRange
-    If pqDataRange Is Nothing Then
-        LogUserEditsOperation "PopulateWorkflowLocation: Source table '" & tbl.Name & "' has no data rows."
-    Else
-        arr = pqDataRange.Value ' Read data into array for speed
-        colDoc = 0: colLoc = 0
-        colDoc = tbl.ListColumns(PQ_DOCNUM_COL_NAME).Index      ' Get index using constant
-        colLoc = tbl.ListColumns(PQ_LOCATION_COL_NAME).Index    ' Get index using constant
-        If Err.Number <> 0 Or colDoc = 0 Or colLoc = 0 Then
-             LogUserEditsOperation "PopulateWorkflowLocation: ERROR - Required columns ('" & PQ_DOCNUM_COL_NAME & "' or '" & PQ_LOCATION_COL_NAME & "') not found in source table '" & tbl.Name & "'."
-             GoTo Cleanup_Workflow ' Go to cleanup on error
-        End If
-
-        ' Populate dictionary using CLEANED keys
-        For r = 1 To UBound(arr, 1)
-            key = CleanDocumentNumber(CStr(arr(r, colDoc))) ' Clean the source DocNum
-            If Len(key) > 0 Then
-                loc = CStr(arr(r, colLoc)) ' Get location value
-                If Not dict.Exists(key) Then dict.Add key, loc
-            End If
-        Next r
-        LogUserEditsOperation "PopulateWorkflowLocation: Built dictionary with " & dict.Count & " entries from source table."
-    End If
-    On Error GoTo WorkflowErrorHandler ' Use specific handler from here
-
-    ' --- Write Locations to Dashboard Column J ---
-    Dim dashDocNum As String
-    Dim workflowLoc As String
-    Dim debugMsg As String ' For optional debug logging
-
-    If dict.Count > 0 Then ' Only loop if dictionary has entries
-        For i = 4 To lastRowDash
-            dashDocNum = CleanDocumentNumber(CStr(ws.Cells(i, "A").Value)) ' Clean dashboard DocNum
-            workflowLoc = "Quote Only" ' Default value
-
-            If Len(dashDocNum) > 0 Then
-                If dict.Exists(dashDocNum) Then
-                    workflowLoc = CStr(dict(dashDocNum)) ' Get location from dictionary
-                    ' Ensure blank/null locations default to "Quote Only"
-                    If Len(Trim(workflowLoc)) = 0 Then workflowLoc = "Quote Only"
-                    foundCount = foundCount + 1
-                Else
-                    notFoundCount = notFoundCount + 1 ' DocNum on dashboard not found in location source
-                End If
-            End If
-
-            ws.Cells(i, DB_COL_WORKFLOW_LOCATION).Value = workflowLoc ' Write value to Column J
-
-            ' Optional Debug Logging (controlled by constant)
-            If DEBUG_WorkflowLocation Then
-                debugMsg = "WorkflowLoc row " & i & ": DashKey='" & dashDocNum & "'" & _
-                           IIf(dict.Exists(dashDocNum), " FOUND -> '", " NOT FOUND -> Defaulting to '") & workflowLoc & "'"
-                Debug.Print debugMsg ' Output to Immediate Window
-            End If
-        Next i
-        LogUserEditsOperation "PopulateWorkflowLocation: Finished writing to Column J. Found: " & foundCount & ", Not Found: " & notFoundCount & "."
-    Else
-        LogUserEditsOperation "PopulateWorkflowLocation: Lookup dictionary is empty. Writing default 'Quote Only' to Column J."
-        ' If dictionary is empty, fill column J with default
-        If lastRowDash >= 4 Then ws.Range(DB_COL_WORKFLOW_LOCATION & "4:" & DB_COL_WORKFLOW_LOCATION & lastRowDash).Value = "Quote Only"
-    End If
-
-    LogUserEditsOperation "PopulateWorkflowLocation: Completed. Time: " & Format(Timer - t_Start, "0.00") & "s"
-
-Cleanup_Workflow: ' Cleanup point for this sub
-    On Error Resume Next ' Prevent errors during cleanup
-    Set dict = Nothing: Set tbl = Nothing: Set wsPQ = Nothing: Set pqDataRange = Nothing
-    If IsArray(arr) Then Erase arr
-    Exit Sub
-
-WorkflowErrorHandler: ' Error handler for this sub
-    LogUserEditsOperation "ERROR in PopulateWorkflowLocation: [" & Err.Number & "] " & Err.Description & " (Line: " & Erl & ")"
-    Resume Cleanup_Workflow ' Go to cleanup on error
-
-End Sub
-
-
-'------------------------------------------------------------------------------
-' RestoreUserEditsToDashboard – Applies UserEdits B,C,D -> Dashboard L,M,N
-' Uses robust dictionary lookup with cleaned keys.
-' *** Using robust version ***
-'------------------------------------------------------------------------------
-Private Sub RestoreUserEditsToDashboard(wsDash As Worksheet, _
-                                        wsEdits As Worksheet, _
-                                        lastRowDash As Long)
-
-    LogUserEditsOperation "RestoreUserEdits: Starting process..."
-    If wsDash Is Nothing Or wsEdits Is Nothing Then
-        LogUserEditsOperation "RestoreUserEdits: ERROR - Worksheet object(s) not provided."
-        Exit Sub
-    End If
-    If lastRowDash < 4 Then
-        LogUserEditsOperation "RestoreUserEdits: No data rows on dashboard to restore edits to."
-        Exit Sub
-    End If
-
-    ' --- Load UserEdits dictionary with cleaned keys ---
-    Dim dict As Object
-    Set dict = LoadUserEditsToDictionary(wsEdits) ' Assumes this function handles errors and logs
-    If dict Is Nothing Then ' Check if dictionary creation failed critically
-         LogUserEditsOperation "RestoreUserEdits: CRITICAL ERROR - Failed to load UserEdits dictionary. Aborting restore."
-         Exit Sub
-    End If
-
-    If dict.Count = 0 Then
-        LogUserEditsOperation "RestoreUserEdits: No data found in UserEdits dictionary. Skipping restore."
-        Exit Sub
-    End If
-
-    Dim rDash As Long, rEdit As Long
-    Dim keyDash As String
-    Dim restoredCount As Long, notFoundCount As Long
-    Dim errCount As Long
-
-    LogUserEditsOperation "RestoreUserEdits: Processing dashboard rows 4 to " & lastRowDash & "..."
-
-    ' --- Loop through Dashboard Rows ---
-    For rDash = 4 To lastRowDash
-        keyDash = CleanDocumentNumber(CStr(wsDash.Cells(rDash, "A").Value)) ' Clean the dashboard key
-
-        If Len(keyDash) > 0 Then
-            If dict.Exists(keyDash) Then
-                ' --- Match Found: Restore Data ---
-                rEdit = dict(keyDash) ' Get the SHEET row number from UserEdits
-                restoredCount = restoredCount + 1
-
-                On Error Resume Next ' Handle potential errors writing to dashboard cell for THIS ROW ONLY
-                wsDash.Cells(rDash, DB_COL_PHASE).Value = wsEdits.Cells(rEdit, UE_COL_PHASE).Value
-                wsDash.Cells(rDash, DB_COL_LASTCONTACT).Value = wsEdits.Cells(rEdit, UE_COL_LASTCONTACT).Value
-                wsDash.Cells(rDash, DB_COL_COMMENTS).Value = wsEdits.Cells(rEdit, UE_COL_COMMENTS).Value
-                If Err.Number <> 0 Then
-                    errCount = errCount + 1
-                    ' Log only the first few errors to avoid flooding log
-                    If errCount <= 5 Then LogUserEditsOperation "RestoreUserEdits: ERROR writing data for Dash Row " & rDash & " (Key: " & keyDash & ") from UE Row " & rEdit & ". Error: " & Err.Description
-                    Err.Clear
-                End If
-                On Error GoTo 0 ' Restore default error handling for the loop
-
-            Else
-                ' --- No Match Found ---
-                ' Dashboard DocNum exists but has no corresponding entry in UserEdits.
-                ' Keep the value in Col L (from AutoStage). Clear M and N.
-                wsDash.Cells(rDash, DB_COL_LASTCONTACT).ClearContents ' Clear M
-                wsDash.Cells(rDash, DB_COL_COMMENTS).ClearContents    ' Clear N
-                notFoundCount = notFoundCount + 1
-            End If
-        Else
-            ' Dashboard key is blank, clear L-N
-            wsDash.Range(wsDash.Cells(rDash, DB_COL_PHASE), wsDash.Cells(rDash, DB_COL_COMMENTS)).ClearContents
-        End If
-    Next rDash
-
-    If errCount > 0 Then LogUserEditsOperation "RestoreUserEdits: Encountered " & errCount & " errors writing data (logged first 5)."
-    LogUserEditsOperation "RestoreUserEdits: Finished. Edits applied/checked: " & restoredCount & ". No matching edit found: " & notFoundCount & "."
-    Set dict = Nothing ' Clean up
-
-End Sub
 
 
 '================================================================================
@@ -1036,14 +1113,13 @@ Private Sub CleanupDashboardLayout(ws As Worksheet)
     Application.ScreenUpdating = True
 End Sub
 
-
 '------------------------------------------------------------------------------
-' InitializeDashboardLayout - Sets headers A-N in Row 3
-' *** MODIFIED to enable wrap text for Comments column N ***
+' InitializeDashboardLayout - Sets headers A-N in Row 3, disables Col N wrap
+' *** Corrected Header Order: J=Workflow Location, K=Missing Quote Alert ***
 '------------------------------------------------------------------------------
 Private Sub InitializeDashboardLayout(ws As Worksheet)
     If ws Is Nothing Then Exit Sub
-    LogUserEditsOperation "InitializeDashboardLayout: Setting headers A-N (Using AutoFit later)."
+    LogUserEditsOperation "InitializeDashboardLayout: Setting headers A-N, disabling Col N wrap."
 
     ' --- Clear Data Rows & Extra Columns ---
     ws.Range("A4:" & DB_COL_COMMENTS & ws.rows.Count).ClearContents
@@ -1054,10 +1130,16 @@ Private Sub InitializeDashboardLayout(ws As Worksheet)
     ' --- Set Headers in Row 3 ---
     With ws.Range("A3:" & DB_COL_COMMENTS & "3") ' Range A3:N3
         .ClearContents
-        .Value = Array( _
-            "Document Number", "Client ID", "Customer Name", "Document Amount", "Document Date", _
-            "First Date Pulled", "Salesperson ID", "Entered By", "Pull Count", "Workflow Location", _
-            "Missing Quote Alert", "Engagement Phase", "Last Contact Date", "User Comments")
+            ' *** CORRECTED Header Order: J=Workflow Location, K=Missing Quote Alert ***
+            ' *** Cleaned Syntax - No Comments Inside Array ***
+            .Value = Array( _
+                "Document Number", "Client ID", "Customer Name", "Document Amount", "Document Date", _
+                "First Date Pulled", "Salesperson ID", "Entered By", "Pull Count", _
+                "Workflow Location", _
+                "Missing Quote Alert", _
+                "Engagement Phase", "Last Contact Date", "User Comments")
+            ' *** End Corrected Array ***
+
         .Font.Bold = True
         .Interior.Color = RGB(16, 107, 193)
         .Font.Color = RGB(255, 255, 255)
@@ -1069,25 +1151,24 @@ Private Sub InitializeDashboardLayout(ws As Worksheet)
         .Borders(xlEdgeBottom).Color = RGB(200, 200, 200)
     End With
 
-    ' --- REMOVED All Fixed Column Width Settings ---
+    ' --- Set Row 3 Height (Done later in RefreshDashboard Step 9 after AutoFit) ---
+    ' On Error Resume Next
+    ' ws.rows(3).AutoFit ' Initial AutoFit can cause issues before final widths set
+    ' On Error GoTo 0
 
-    ' --- AutoFit Row 3 Height ---
-    On Error Resume Next
-    ws.rows(3).AutoFit
-    On Error GoTo 0
-
-    ' *** ADDED: Enable Text Wrapping for the data area of Column N ***
+    ' --- Disable Text Wrapping for the data area of Column N ---
     On Error Resume Next ' Ignore error if sheet is protected
-    ' Apply to a reasonable number of rows, or adjust as needed
     Dim wrapRange As Range
     Set wrapRange = ws.Range(DB_COL_COMMENTS & "4:" & DB_COL_COMMENTS & ws.rows.Count) ' Select Col N data area
-    wrapRange.WrapText = True
-    Set wrapRange = Nothing ' Clear object variable
-    If Err.Number <> 0 Then LogUserEditsOperation "InitializeDashboardLayout: Warning - could not set WrapText for Column N.": Err.Clear
-    On Error GoTo 0 ' Use specific handler if defined for this sub, else default
+    wrapRange.WrapText = False ' Ensure comments overflow/truncate, not wrap
+    Set wrapRange = Nothing
+    If Err.Number <> 0 Then LogUserEditsOperation "InitializeDashboardLayout: Warning - could not set WrapText for Column N data area.": Err.Clear
+    On Error GoTo 0
 
-    LogUserEditsOperation "InitializeDashboardLayout: Headers set (Column widths to be AutoFit later)."
+    LogUserEditsOperation "InitializeDashboardLayout: Headers set, Col N data wrap DISABLED."
 End Sub
+
+
 
 
 '------------------------------------------------------------------------------
@@ -1171,72 +1252,68 @@ Public Sub SetupDashboard(ws As Worksheet)
 ' *** Using compatible version (avoids TextFrame2 errors) ***
 '------------------------------------------------------------------------------
 Public Sub ModernButton(ws As Worksheet, cellRef As String, buttonText As String, macroName As String)
-    Dim btn As Shape
-    Dim targetCell As Range
-    Dim btnLeft As Double, btnTop As Double, btnWidth As Double, btnHeight As Double
-
-    On Error Resume Next ' Handle invalid cellRef
-    Set targetCell = ws.Range(cellRef)
-    If targetCell Is Nothing Then
-        LogUserEditsOperation "ModernButton: ERROR - Invalid cell reference '" & cellRef & "'."
-        Exit Sub
-    End If
-    On Error GoTo 0 ' Restore error handling
-
-    ' Calculate button position and size based on target cell(s)
-    ' Use user's preferred sizing logic
-    btnLeft = targetCell.Left
-    btnTop = targetCell.Top
-    btnWidth = targetCell.Width * 1.6
-    btnHeight = targetCell.Height * 0.75
-    btnTop = btnTop + (targetCell.Height - btnHeight) / 2 ' Center vertically
-
+    On Error Resume Next
+    
+    ' Get the target range (which may be merged)
+    Dim tgt As Range: Set tgt = ws.Range(cellRef)
+    If tgt Is Nothing Then Exit Sub
+    
+    ' Use entire merged range dimensions with padding
+    Dim pad As Double: pad = 2 ' Small inset padding
+    Dim btnLeft As Double: btnLeft = tgt.Left + pad
+    Dim btnTop As Double: btnTop = tgt.Top + pad
+    Dim btnWidth As Double: btnWidth = tgt.Width - (2 * pad)
+    Dim btnHeight As Double: btnHeight = tgt.Height - (2 * pad)
+    
     ' Add the shape
-    On Error Resume Next ' Handle error adding shape
+    Dim btn As Shape
     Set btn = ws.Shapes.AddShape(msoShapeRoundedRectangle, btnLeft, btnTop, btnWidth, btnHeight)
-    If Err.Number <> 0 Then
-        LogUserEditsOperation "ModernButton: ERROR creating button shape '" & buttonText & "'. Error: " & Err.Description
-        Set btn = Nothing ' Ensure btn is Nothing on failure
-        Exit Sub
-    End If
-    On Error GoTo 0
-
-    ' Style the button
+    If btn Is Nothing Then Exit Sub
+    
+    ' Style the button with modern appearance
     With btn
         .Fill.Visible = msoTrue
         .Fill.Solid
-        .Fill.ForeColor.RGB = RGB(42, 120, 180) ' User's preferred blue
-        .Line.ForeColor.RGB = RGB(25, 95, 150)  ' Darker blue line
-        .Line.Weight = 0.75
-        .Name = "btn" & Replace(buttonText, " ", "") ' Give button a name
-
-        ' Text Formatting using reliable TextFrame
+        .Fill.ForeColor.RGB = RGB(0, 120, 215) ' Windows blue
+        .Line.Visible = msoFalse ' No border
+        .Adjustments(1) = 0.25 ' Rounded corner radius
+        
+        ' Optional: Add gradient for more modern look
         On Error Resume Next
-        With .TextFrame
-            .Characters.Text = buttonText
-            .Characters.Font.Color = RGB(255, 255, 255) ' White text
-            .Characters.Font.Size = 10
-            .Characters.Font.Name = "Segoe UI" ' Match user's preference
-            .Characters.Font.Bold = True
-            .HorizontalAlignment = xlHAlignCenter
-            .VerticalAlignment = xlVAlignCenter
+        .Fill.OneColorGradient msoGradientHorizontal, 1, 0.25
+        
+        ' Text formatting with more modern approach
+        On Error Resume Next
+        With .TextFrame2
+            .TextRange.Text = buttonText
+            .TextRange.Font.Fill.ForeColor.RGB = RGB(255, 255, 255) ' White text
+            .TextRange.Font.Size = 9
+            .HorizontalAnchor = msoAnchorCenter
+            .VerticalAnchor = msoAnchorMiddle
+            .TextRange.Font.Name = "Segoe UI"
         End With
-        If Err.Number <> 0 Then LogUserEditsOperation "ModernButton: Warning - Error setting text format for '" & buttonText & "'.": Err.Clear
-
-        ' Shadow Effect (Keep user's preferred shadow if it worked)
-        On Error Resume Next
-        .Shadow.Type = msoShadow21 ' Check if this is the desired one
-        .Shadow.Transparency = 0.7
-        .Shadow.Visible = msoTrue
-         If Err.Number <> 0 Then LogUserEditsOperation "ModernButton: Warning - Error setting shadow for '" & buttonText & "'.": Err.Clear
-
-        ' Assign Macro
+        
+        ' If TextFrame2 fails, fall back to TextFrame
+        If Err.Number <> 0 Then
+            Err.Clear
+            With .TextFrame
+                .Characters.Text = buttonText
+                .Characters.Font.Color = RGB(255, 255, 255)
+                .Characters.Font.Size = 9
+                .Characters.Font.Name = "Segoe UI"
+                .HorizontalAlignment = xlHAlignCenter
+                .VerticalAlignment = xlVAlignCenter
+            End With
+        End If
+        
+        ' Placement settings
+        .Placement = xlMoveAndSize ' Move and resize with cells
+        .LockAspectRatio = msoFalse
+        .Name = "btn_" & Replace(buttonText, " ", "_")
         .OnAction = macroName
-         If Err.Number <> 0 Then LogUserEditsOperation "ModernButton: Error assigning macro '" & macroName & "'.": Err.Clear
-
     End With
+    
     On Error GoTo 0
-    Set btn = Nothing: Set targetCell = Nothing
 End Sub
 
 
@@ -1258,41 +1335,55 @@ Private Sub FreezeDashboard(ws As Worksheet)
 End Sub
 
 '------------------------------------------------------------------------------
+' SetupDashboardUI_EndRefresh - Row-2 timestamp + two buttons (NO MERGES for buttons)
+' Button 1 anchored to C2, Button 2 anchored to D2.
+'------------------------------------------------------------------------------
+'------------------------------------------------------------------------------
 ' SetupDashboardUI_EndRefresh - Adds Timestamp and Buttons to Row 2 at end of refresh
-' *** NEW Sub to consolidate UI updates called at end of RefreshDashboard ***
+' CORRECTED: No button merges, buttons C2/D2, clears orphan F2 timestamp.
 '------------------------------------------------------------------------------
 Private Sub SetupDashboardUI_EndRefresh(ws As Worksheet)
     If ws Is Nothing Then Exit Sub
-    LogUserEditsOperation "SetupDashboardUI_EndRefresh: Updating Timestamp and Buttons."
-    On Error Resume Next ' Ignore errors if sheet is protected
+    LogUserEditsOperation "SetupDashboardUI_EndRefresh: Updating Timestamp and Buttons (No Button Merges)."
+    On Error Resume Next ' Use local error handling
 
-    ' --- Update Timestamp (Merged G2:I2) ---
-    With ws.Range("G2:I2") ' Merged by Initialize or SetupDashboardLayout
+    '--- 0) Kill any old Row-2 shapes ---
+    Dim shp As Shape
+    For Each shp In ws.Shapes
+        ' Check if shape's top-left cell is in row 2
+        If Not Intersect(shp.TopLeftCell, ws.rows(2)) Is Nothing Then
+            shp.Delete
+        End If
+    Next shp
+    If Err.Number <> 0 Then LogUserEditsOperation "SetupDashboardUI_EndRefresh: Warning - Error deleting old buttons.": Err.Clear
+
+    '--- 1) Clean up potentially stale merges and values from previous versions ---
+    ws.Range("C2:D2").UnMerge ' Unmerge potential C2:D2 merge
+    ws.Range("E2:F2").UnMerge ' Unmerge potential E2:F2 merge
+    ws.Range("F2:G2").UnMerge ' Unmerge potential F2:G2 merge
+    ws.Range("F2").ClearContents ' <<< FIX: Clear potential orphan timestamp value in F2
+    If Err.Number <> 0 Then LogUserEditsOperation "SetupDashboardUI_EndRefresh: Warning - Error unmerging/clearing cells.": Err.Clear
+
+    '--- 2) Timestamp (keep G2:I2 merged) ---
+    With ws.Range("G2:I2")
+        .Merge ' Ensure timestamp area is merged
         .Value = "Last Refreshed: " & Format$(Now(), "mm/dd/yyyy h:nn AM/PM")
         .HorizontalAlignment = xlCenter
         .VerticalAlignment = xlCenter
         .Font.Size = 9
-        .Font.Name = "Segoe UI" ' Match user preference
-        .Font.Color = RGB(80, 80, 80) ' Dark gray
+        .Font.Name = "Segoe UI"
+        .Font.Color = RGB(80, 80, 80)
+        If Err.Number <> 0 Then LogUserEditsOperation "SetupDashboardUI_EndRefresh: Warning - Error setting timestamp.": Err.Clear
     End With
-    If Err.Number <> 0 Then LogUserEditsOperation "SetupDashboardUI_EndRefresh: Error setting timestamp.": Err.Clear
 
-    ' --- Remove Old Buttons in Row 2 ---
-    Dim shp As Shape
-    For Each shp In ws.Shapes
-        If shp.TopLeftCell.Row = 2 Then
-            shp.Delete
-        End If
-    Next shp
-    If Err.Number <> 0 Then LogUserEditsOperation "SetupDashboardUI_EndRefresh: Error deleting old buttons.": Err.Clear
+    '--- 3) Drop the two buttons (using single-cell anchors C2 and D2) ---
+    ModernButton ws, "C2", "Standard Refresh", _
+                 "Button_RefreshDashboard_SaveAndRestoreEdits"
 
-    ' --- Create New Buttons using user's ModernButton ---
-    ' Create buttons in single cells C2 and E2 as per user's preference
-    ModernButton ws, "C2", "Standard Refresh", "Button_RefreshDashboard_SaveAndRestoreEdits"
-    ModernButton ws, "E2", "Preserve UserEdits", "Button_RefreshDashboard_PreserveUserEdits"
+    ModernButton ws, "D2", "Preserve UserEdits", _
+                 "Button_RefreshDashboard_PreserveUserEdits"
 
-    If Err.Number <> 0 Then LogUserEditsOperation "SetupDashboardUI_EndRefresh: Note - Error setting UI elements.": Err.Clear
-    On Error GoTo 0
+    On Error GoTo 0 ' Restore default handler
 End Sub
 
 
@@ -1303,18 +1394,25 @@ End Sub
 
 '------------------------------------------------------------------------------
 ' SaveUserEditsFromDashboard - Captures L-N from Dashboard -> UserEdits A-F
-' Uses dictionary lookup and cleaned keys for reliable matching.
-' *** Using robust version ***
+' Uses dictionary lookup for row numbers and cleaned keys for reliable matching.
+' *** CORRECTED to handle dictionary changes from refactoring ***
+'------------------------------------------------------------------------------
+'------------------------------------------------------------------------------
+' SaveUserEditsFromDashboard - Captures L-N from Dashboard -> UserEdits A-F
+' Uses dictionary lookup for row numbers and cleaned keys for reliable matching.
+' *** UPDATED: Prevents saving literal "Legacy Process" for Phase ***
 '------------------------------------------------------------------------------
 Public Sub SaveUserEditsFromDashboard()
     Dim wsDash As Worksheet, wsEdits As Worksheet
     Dim lastRowDash As Long, lastRowEdits As Long, destRow As Long
-    Dim i As Long
-    Dim dashDocNum As String, cleanedDashDocNum As String
-    Dim userEditsDict As Object ' Dictionary for existing UserEdits lookup
-    Dim editRow As Variant      ' Stores existing row number from dictionary
+    Dim i As Long, r As Long ' Loop counters
+    Dim dashDocNum As String, cleanedDashDocNum As String, cleanedDocNum As String
+    Dim editRow As Variant      ' Stores existing SHEET row number from rowIndexDict
     Dim hasEdits As Boolean, wasChanged As Boolean
     Dim editsSavedCount As Long, editsUpdatedCount As Long
+    Dim rowIndexDict As Object   ' Dictionary mapping CleanDocNum -> Sheet Row Number
+
+    On Error GoTo ErrorHandler_SaveUserEdits ' Use a specific error handler for this sub
 
     LogUserEditsOperation "SaveUserEditsFromDashboard: Starting process..."
 
@@ -1331,10 +1429,14 @@ Public Sub SaveUserEditsFromDashboard()
         Exit Sub
     End If
 
-    ' --- Load Existing UserEdits for Lookup ---
-    Set userEditsDict = LoadUserEditsToDictionary(wsEdits) ' Uses CleanDocumentNumber for keys
-    lastRowDash = wsDash.Cells(wsDash.rows.Count, "A").End(xlUp).Row
+    ' --- Build Row Index Dictionary (CleanDocNum -> Sheet Row Number) ---
+    LogUserEditsOperation "SaveUserEditsFromDashboard: Building Row Index Dictionary..."
+    Set rowIndexDict = BuildRowIndexDict(wsEdits) ' Use Helper Function
+    LogUserEditsOperation "SaveUserEditsFromDashboard: Built Row Index Dict with " & rowIndexDict.Count & " entries."
+    ' --- End Build Row Index Dictionary ---
 
+    ' --- Prepare for Dashboard Loop ---
+    lastRowDash = wsDash.Cells(wsDash.rows.Count, "A").End(xlUp).Row
     LogUserEditsOperation "SaveUserEditsFromDashboard: Checking dashboard rows 4 to " & lastRowDash & " for edits..."
 
     ' --- Loop Through Dashboard Rows ---
@@ -1346,7 +1448,7 @@ Public Sub SaveUserEditsFromDashboard()
 
             If cleanedDashDocNum <> "" Then ' Only process if there's a valid DocNum
 
-                ' Check if dashboard row L, M, or N has any data
+                ' Check if dashboard row L, M, or N has any data (indicates potential user edit)
                 hasEdits = False
                 If wsDash.Cells(i, DB_COL_PHASE).Value <> "" Or _
                    wsDash.Cells(i, DB_COL_LASTCONTACT).Value <> "" Or _
@@ -1354,70 +1456,90 @@ Public Sub SaveUserEditsFromDashboard()
                     hasEdits = True
                 End If
 
-                ' Find if this cleaned DocNum already exists in UserEdits
+                ' Find if this cleaned DocNum already exists in UserEdits using the Row Index Dict
                 editRow = 0 ' Reset flag
-                If userEditsDict.Exists(cleanedDashDocNum) Then
-                    editRow = userEditsDict(cleanedDashDocNum) ' Get existing SHEET row number
+                If rowIndexDict.Exists(cleanedDashDocNum) Then
+                    editRow = rowIndexDict(cleanedDashDocNum) ' Gets Row Number (Long)
                 End If
 
                 ' --- Process If Dashboard Has Edits OR If Entry Exists in UserEdits ---
+                ' (We process existing entries even if dashboard L-N are blank now,
+                '  to ensure UserEdits reflects the latest state from the dashboard)
                 If hasEdits Or editRow > 0 Then
 
                     ' Determine destination row in UserEdits sheet
                     If editRow > 0 Then
-                        destRow = editRow ' Update existing row
+                        destRow = CLng(editRow) ' Update existing row found via rowIndexDict
                     Else
-                        ' Add new row
+                        ' Add new row to UserEdits sheet
                         lastRowEdits = wsEdits.Cells(wsEdits.rows.Count, UE_COL_DOCNUM).End(xlUp).Row + 1
                         If lastRowEdits < 2 Then lastRowEdits = 2 ' Ensure starting at row 2
                         destRow = lastRowEdits
                         wsEdits.Cells(destRow, UE_COL_DOCNUM).Value = cleanedDashDocNum ' Write the CLEANED document number
-                        userEditsDict.Add cleanedDashDocNum, destRow ' Add to dictionary immediately
+                        RowIndexDictAdd rowIndexDict, cleanedDashDocNum, destRow ' Keep rowIndexDict in sync
                         wasChanged = True ' New row always counts as changed
                         editsSavedCount = editsSavedCount + 1
                     End If
 
                     ' Get current values from Dashboard L, M, N
-                    Dim dbPhaseVal, dbLastContactVal, dbCommentsVal
+                    Dim dbPhaseVal As Variant ' Use Variant to handle potential blanks/errors
+                    Dim dbLastContactVal As Variant
+                    Dim dbCommentsVal As Variant
                     dbPhaseVal = wsDash.Cells(i, DB_COL_PHASE).Value
                     dbLastContactVal = wsDash.Cells(i, DB_COL_LASTCONTACT).Value
                     dbCommentsVal = wsDash.Cells(i, DB_COL_COMMENTS).Value
 
-                    ' Compare with UserEdits values and update if different (use CStr for safe comparison)
+                    ' --- Prevent saving "Legacy Process" placeholder --- <<< UPDATE IS HERE
+                    If LCase$(Trim$(CStr(dbPhaseVal))) = "legacy process" Then
+                        dbPhaseVal = vbNullString ' Treat as blank before comparing/saving
+                    End If
+                    ' --- End Update ---
+
+                    ' Compare with UserEdits values on sheet and update if different
+                    ' Use CStr for safe comparison of variants/values
                     If editRow = 0 Or CStr(wsEdits.Cells(destRow, UE_COL_PHASE).Value) <> CStr(dbPhaseVal) Then
-                        wsEdits.Cells(destRow, UE_COL_PHASE).Value = dbPhaseVal
+                        wsEdits.Cells(destRow, UE_COL_PHASE).Value = dbPhaseVal ' Write possibly modified dbPhaseVal to UserEdits B
                         If editRow > 0 Then wasChanged = True
                     End If
                     If editRow = 0 Or CStr(wsEdits.Cells(destRow, UE_COL_LASTCONTACT).Value) <> CStr(dbLastContactVal) Then
-                         wsEdits.Cells(destRow, UE_COL_LASTCONTACT).Value = dbLastContactVal
+                         wsEdits.Cells(destRow, UE_COL_LASTCONTACT).Value = dbLastContactVal ' Write to UserEdits C
                          If editRow > 0 Then wasChanged = True
                     End If
                     If editRow = 0 Or CStr(wsEdits.Cells(destRow, UE_COL_COMMENTS).Value) <> CStr(dbCommentsVal) Then
-                         wsEdits.Cells(destRow, UE_COL_COMMENTS).Value = dbCommentsVal
+                         wsEdits.Cells(destRow, UE_COL_COMMENTS).Value = dbCommentsVal ' Write to UserEdits D
                          If editRow > 0 Then wasChanged = True
                     End If
 
                     ' If any change was made, update Source/Timestamp
                     If wasChanged Then
-                        wsEdits.Cells(destRow, UE_COL_SOURCE).Value = Module_Identity.GetWorkbookIdentity()
-                        wsEdits.Cells(destRow, UE_COL_TIMESTAMP).Value = Format$(Now(), "yyyy-mm-dd hh:nn:ss")
+                        wsEdits.Cells(destRow, UE_COL_SOURCE).Value = Module_Identity.GetWorkbookIdentity() ' Write to UserEdits E
+                        wsEdits.Cells(destRow, UE_COL_TIMESTAMP).Value = Format$(Now(), "yyyy-mm-dd hh:nn:ss") ' Write to UserEdits F
                         If editRow > 0 Then editsUpdatedCount = editsUpdatedCount + 1
                     End If
                 End If ' End If hasEdits Or editRow > 0
             End If ' End If cleanedDashDocNum <> ""
-        Next i
+        Next i ' Next dashboard row
     End If ' End If lastRowDash >= 4
 
     LogUserEditsOperation "SaveUserEditsFromDashboard: Finished. New Edits Saved: " & editsSavedCount & ". Existing Edits Updated: " & editsUpdatedCount & "."
-    Set userEditsDict = Nothing ' Clean up dictionary
-    Set wsDash = Nothing: Set wsEdits = Nothing
-    ' No Exit Sub here, allow RefreshDashboard's error handler to manage flow
-    ' Exit Sub
 
-'ErrorHandler_SaveUserEdits: ' Now handled by RefreshDashboard's main handler
-'    LogUserEditsOperation "SaveUserEditsFromDashboard: ERROR [" & Err.Number & "] " & Err.Description
-'    Set userEditsDict = Nothing: Set wsDash = Nothing: Set wsEdits = Nothing
+    ' --- Cleanup for this specific Sub ---
+    Set rowIndexDict = Nothing
+    Set wsDash = Nothing
+    Set wsEdits = Nothing
+    Exit Sub ' Normal Exit
+
+ErrorHandler_SaveUserEdits:
+    LogUserEditsOperation "ERROR in SaveUserEditsFromDashboard: [" & Err.Number & "] " & Err.Description & " (Line: " & Erl & ")"
+    MsgBox "An error occurred while saving user edits: " & vbCrLf & Err.Description, vbCritical, "Save Edits Error"
+    ' Ensure objects are released even on error
+    Set rowIndexDict = Nothing
+    Set wsDash = Nothing
+    Set wsEdits = Nothing
+    ' Note: We don't re-enable events here; RefreshDashboard's main handler does that.
 End Sub
+
+
 
 
 '------------------------------------------------------------------------------
@@ -1907,7 +2029,7 @@ End Sub
 ' ApplyWorkflowLocationFormatting - Applies CF to Col J (Workflow)
 ' *** Uses user's provided version ***
 '------------------------------------------------------------------------------
-Private Sub ApplyWorkflowLocationFormatting(ws As Worksheet, Optional startDataRow As Long = 4)
+Public Sub ApplyWorkflowLocationFormatting(ws As Worksheet, Optional startDataRow As Long = 4)
     On Error GoTo ErrorHandler_WorkflowFormat ' Use specific handler
 
     If ws Is Nothing Then Exit Sub ' Added check
@@ -2116,4 +2238,42 @@ End Sub
 '    GetWorkbookIdentity = WORKBOOK_IDENTITY
 ' End Function
 '------------------------------------------------------------------------------
+Public Sub ResetDashboardLayout()
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("SQRCT Dashboard")
+    ' Reset critical widths
+    ws.Columns("C").ColumnWidth = 25  ' Customer Name
+    ws.Columns("N").ColumnWidth = 45  ' User Comments
+    ' Fix button areas
+    ws.Range("C2:D2").Merge
+    ws.Range("E2:F2").Merge
+    ' Rebuild buttons
+    SetupDashboardUI_EndRefresh ws
+    MsgBox "Dashboard layout has been reset", vbInformation
+End Sub
+'============================================================
+'  Workbook-level structure protection helper
+'============================================================
+Public Function ToggleWorkbookStructure(lockIt As Boolean) As Boolean
+    ' Purpose: Protects or unprotects the Workbook Structure
+    '          Used by modArchival when adding/deleting sheets.
+    ' Returns: True if successful, False if error occurred.
 
+    On Error GoTo ErrHandler
+    
+    LogUserEditsOperation "ToggleWorkbookStructure: Setting Lock to " & lockIt & "..." ' Added log
+    
+    If lockIt Then
+        ThisWorkbook.Protect Structure:=True, Password:=PW_WORKBOOK ' Use PW_WORKBOOK constant
+    Else
+        ThisWorkbook.Unprotect Password:=PW_WORKBOOK ' Use PW_WORKBOOK constant
+    End If
+    
+    ToggleWorkbookStructure = True ' Assume success if no error occurred
+    LogUserEditsOperation "ToggleWorkbookStructure: Success." ' Added log
+    Exit Function
+
+ErrHandler:
+    LogUserEditsOperation "ToggleWorkbookStructure ERR " & Err.Number & ": " & Err.Description
+    ToggleWorkbookStructure = False ' Return False on error
+End Function
