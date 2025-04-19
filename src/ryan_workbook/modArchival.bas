@@ -9,7 +9,7 @@ Option Explicit
 '--------------------------------------------------
 ' 1--  PHASE CATEGORISATION  (Based on user confirmation)
 '--------------------------------------------------
-Private Const ACTIVE_PHASES As String = "|First F/U|AF|RZ|KMH|RI|" ' Added leading/trailing pipes
+Private Const ACTIVE_PHASES As String = "|FIRST F/U|AF|RZ|KMH|RI|OTHER (ACTIVE)|" ' Added leading/trailing pipes
 
 '--------------------------------------------------
 ' 2--  SHEET NAMES & UI TEXT (NEW NAMING CONVENTION)
@@ -591,67 +591,48 @@ CopyFilteredRows_Error:
     If IsArray(finalOutputData) Then Erase finalOutputData ' Final array
     ' Let error propagate back to the caller's error handler
 End Sub
-
-
-'--------------------------------------------------
-'  Phase test helper - Checks if phase is considered Active
-'--------------------------------------------------
-'--------------------------------------------------
-' TRUE if the phase counts as active
-'--------------------------------------------------
 Private Function IsPhaseActive(ph As String) As Boolean
+    '--------------------------------------------------
+    ' Checks if a given phase string exists in the pipe-delimited ACTIVE_PHASES constant.
+    ' Used to identify phases that should exclusively be on the Active sheet.
+    ' Returns False for blanks (blanks are handled by IsPhaseArchived).
+    ' Relies on ph being Trimmed and Uppercase. Comparison is case-insensitive.
+    '--------------------------------------------------
     ph = UCase$(Trim$(ph))
-
-    ' ? blanks are ACTIVE  ?
     If Len(ph) = 0 Then
-        IsPhaseActive = True
-        Exit Function
+         IsPhaseActive = False ' Blank is NOT explicitly Active
+    Else
+         ' Check if "|PHASE|" exists within "|PHASE1|PHASE2|..."
+         IsPhaseActive = (InStr(1, ACTIVE_PHASES, "|" & ph & "|", vbTextCompare) > 0)
     End If
-
-    ' pipe-delimited whitelist
-    IsPhaseActive = (InStr(1, ACTIVE_PHASES, "|" & ph & "|") > 0)
 End Function
 
-
-'--------------------------------------------------
-'  Phase test helper - checks if a phase is Archived
-'  REVISED: Treats blanks as ACTIVE, uses explicit list for Archived phases.
-'--------------------------------------------------
 Private Function IsPhaseArchived(ByVal phase As String) As Boolean
-    ' A phase is considered archived ONLY if it's explicitly in the list below.
-    ' Blanks and any other non-listed phases are considered ACTIVE.
-
-    ' --- Trim spaces and handle blanks first ---
-    phase = Trim$(phase) ' Remove leading/trailing spaces
+    '--------------------------------------------------
+    ' Determines if a phase should be on the Archive sheet.
+    ' Logic: A phase is Archived if it is NOT blank AND it is NOT explicitly Active
+    '        (as determined by the IsPhaseActive function checking ACTIVE_PHASES).
+    ' Relies on the typo-proofing system ensuring only valid phases exist.
+    '--------------------------------------------------
+    phase = Trim$(phase)
     If Len(phase) = 0 Then
-        IsPhaseArchived = False ' Blank phase = ACTIVE (NOT Archived)
-        Exit Function
+        IsPhaseArchived = False ' Blank is considered Active (NOT Archived)
+    Else
+        ' If it's not explicitly Active, it belongs in the Archive.
+        IsPhaseArchived = Not IsPhaseActive(phase)
     End If
-    ' --- End blank check ---
-
-    ' --- Explicitly check if phase is in the ARCHIVED list ---
-    Select Case UCase$(phase) ' UCase makes comparison case-insensitive
-        ' ***** ADJUST THIS LIST TO MATCH YOUR ARCHIVED PHASES *****
-        Case "CONVERTED", "DECLINED", "CLOSED (EXTRA ORDER)", "CLOSED", "TEXAS (NO F/U)", "NO RESPONSE", "WW/OM", "LONG-TERM F/U"
-            IsPhaseArchived = True ' Found in the Archived list
-        Case Else
-            IsPhaseArchived = False ' Any other non-blank phase = ACTIVE (NOT Archived)
-    End Select
-    ' ***** END OF LIST TO ADJUST *****
-
 End Function
-
 '--------------------------------------------------
 '  SheetExists - Helper to check if a sheet name exists
 '--------------------------------------------------
 Private Function SheetExists(sName As String) As Boolean
     ' Returns True if a sheet with the given name exists in ThisWorkbook
-    Dim sh As Object ' Use Object to check any sheet type
+    Dim Sh As Object ' Use Object to check any sheet type
     On Error Resume Next ' Prevent error if sheet doesn't exist
-    Set sh = ThisWorkbook.Sheets(sName)
-    SheetExists = Not sh Is Nothing
+    Set Sh = ThisWorkbook.Sheets(sName)
+    SheetExists = Not Sh Is Nothing
     On Error GoTo 0 ' Restore default error handling
-    Set sh = Nothing
+    Set Sh = Nothing
 End Function
 
 '--------------------------------------------------
@@ -832,11 +813,19 @@ Private Sub ApplyViewFormatting(ws As Worksheet, viewTag As String)
     If Err.Number <> 0 Then Module_Dashboard.DebugLog "ApplyViewFormatting", "Warning: Error unprotecting sheet. Err=" & Err.Number: Err.Clear
     On Error GoTo ApplyViewFormatting_Error ' Restore handler
 
-    ' --- Force banner + control row heights to match main dashboard --- <<< ROW HEIGHT FIX ADDED >>>
-    Module_Dashboard.DebugLog "ApplyViewFormatting", "Applying consistent row heights..."
-    On Error Resume Next ' Ignore errors if setting height fails for any reason
-    ws.rows(1).RowHeight = 32  ' Match Title Bar height from SetupDashboard
-    ws.rows(2).RowHeight = 28  ' Match Control Panel height from SetupDashboard
+    ' --- Force banner + control row heights AND BACKGROUND to match main dashboard ---
+    Module_Dashboard.DebugLog "ApplyViewFormatting", "Applying consistent row styles (Height & Color)..." ' Log updated
+    On Error Resume Next ' Ignore errors if setting fails
+
+    ' Set Row 1 Height
+    ws.rows(1).RowHeight = 32  ' Title Bar height
+
+    ' Set Row 2 Height and Background Color
+    With ws.rows(2)            ' Use With block for Row 2
+        .RowHeight = 28
+        .Interior.Color = RGB(245, 245, 245) ' Set light grey background for entire row
+    End With
+    
     ' --- Optional: Set consistent data row height ---
     ' Need to calculate lastRow *before* setting data row height if moved here
     lastRow = ws.Cells(ws.rows.Count, "A").End(xlUp).Row ' Calculate lastRow earlier
@@ -915,6 +904,9 @@ Private Sub ApplyViewFormatting(ws As Worksheet, viewTag As String)
     If Err.Number <> 0 Then Module_Dashboard.DebugLog "ApplyViewFormatting", "Warning: Error applying freeze panes. Err=" & Err.Number: Err.Clear
     On Error GoTo ApplyViewFormatting_Error ' Restore handler
     Module_Dashboard.DebugLog "ApplyViewFormatting", "Applied freeze panes."
+    
+    ' *** ADD THIS CALL TO RE-APPLY VALIDATION ***
+    Call ApplyPhaseValidationToListColumn(ws, DB_COL_PHASE, 4) ' Apply to Active/Archive Col L, starting Row 4
 
      ' --- Final Protection ---
      Module_Dashboard.DebugLog "ApplyViewFormatting", "Applying final sheet protection..."
@@ -958,7 +950,7 @@ Public Sub AddNavigationButtons(ws As Worksheet)
     Const BTN_W_STD    As Double = 110    ' Adjust width for C/D as needed (match ColWidth setting)
     Const BTN_W_NAV    As Double = 75     ' Adjust width for F/G/H as needed (match ColWidth setting)
 
-    Dim btnDefs As Variant, def As Variant, shp As Shape, target As Range, i As Long
+    Dim btnDefs As Variant, def As Variant, shp As Shape, Target As Range, i As Long
     Dim t1 As Double: t1 = Timer
 
 
@@ -1003,17 +995,17 @@ Public Sub AddNavigationButtons(ws As Worksheet)
     Module_Dashboard.DebugLog "AddNavigationButtons", "Creating buttons..."
     For i = LBound(btnDefs) To UBound(btnDefs)
         def = btnDefs(i)
-        Set target = Nothing
+        Set Target = Nothing
         On Error Resume Next
-        Set target = ws.Range(def(0)) ' Get target Cell (e.g., C2)
+        Set Target = ws.Range(def(0)) ' Get target Cell (e.g., C2)
         On Error GoTo AddNav_Error
 
-        If target Is Nothing Then
+        If Target Is Nothing Then
             Module_Dashboard.DebugLog "AddNavigationButtons", "ERROR: Invalid target cell '" & def(0) & "'. Skipping."
         Else
             Set shp = Nothing
             ' Call ModernButton, passing width from def(3)
-            Set shp = Module_Dashboard.ModernButton(ws, target, def(1), def(2), def(3))
+            Set shp = Module_Dashboard.ModernButton(ws, Target, def(1), def(2), def(3))
 
             If Not shp Is Nothing Then
             
@@ -1032,7 +1024,7 @@ Public Sub AddNavigationButtons(ws As Worksheet)
             ' Auto-size width if definition used 0
             If def(3) = 0 Then                ' Check if width is the AutoFit flag
                 On Error Resume Next ' Handle potential error reading target width
-                shp.Width = target.Width - 6  ' Set width based on cell, minus padding
+                shp.Width = Target.Width - 6  ' Set width based on cell, minus padding
                 If Err.Number <> 0 Then       ' Fallback if error reading width
                     shp.Width = 110 ' Default wide width if calculation fails
                     Err.Clear
@@ -1045,8 +1037,8 @@ Public Sub AddNavigationButtons(ws As Worksheet)
                 shp.Name = "btn_" & Replace(def(1), " ", "_") ' Set final name
                  ' Center the button (ModernButton might already approximate this)
                  ' Recalculate here for precision based on actual cell/button dimensions
-                shp.Left = target.Left + (target.Width - shp.Width) / 2
-                shp.Top = target.Top + (target.Height - shp.Height) / 2
+                shp.Left = Target.Left + (Target.Width - shp.Width) / 2
+                shp.Top = Target.Top + (Target.Height - shp.Height) / 2
                 If Err.Number <> 0 Then Module_Dashboard.DebugLog "AddNavigationButtons", "Warning: Error centering/naming '" & shp.Name & "'. Err=" & Err.Number: Err.Clear
                 On Error GoTo AddNav_Error
             Else
@@ -1091,7 +1083,7 @@ AddNav_Error:
     Module_Dashboard.DebugLog "AddNavigationButtons", "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     Module_Dashboard.DebugLog "AddNavigationButtons", "ERROR Handler! Sheet='" & ws.Name & "'. Err=" & Err.Number & ": " & Err.Description & " near line " & Erl
     Module_Dashboard.DebugLog "AddNavigationButtons", "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    Set shp = Nothing: Set target = Nothing
+    Set shp = Nothing: Set Target = Nothing
 End Sub
 
 

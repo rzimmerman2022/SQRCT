@@ -1,0 +1,60 @@
+Feat/Fix: Standardize UI Layout, Fix Button Creation & Phase Filter Bugs (v4.0.0 WIP)
+
+Description:
+This commit, on the 'fix-dashboard-layout' branch, delivers the core features and fixes intended for the v4.0.0 release baseline. It addresses multiple UI inconsistencies, button creation errors, and data filtering bugs identified during debugging. Implements a standardized Row 2 layout across all sheets (Dashboard, Active, Archive) and resolves various compile errors and functional issues.
+
+Detailed Changes:
+
+1.  Feature: Standardized Row 2 UI Layout & Control (modArchival::AddNavigationButtons, Module_Dashboard::SetupDashboard)
+    * Implemented new consistent Row 2 layout: Control Panel (A2), Blank (B2), Std Refresh (C2, auto-width), Preserve Edits (D2, auto-width), Blank (E2), All Items (F2, slim), Active (G2, slim), Archive (H2, slim), Blank (I2), Placeholder Counts (J2, K2, L2), Blank (M2), Timestamp (N2).
+    * Centralized Row 2 UI element creation logic within modArchival::AddNavigationButtons using a btnDefs array definition for easier maintenance.
+    * Updated AddNavigationButtons to calculate button positions based on target cell anchors (C2, D2, F2, G2, H2) and explicitly center buttons.
+    * Implemented auto-fit width logic for C2/D2 buttons and fixed slimmer width (65px) for F2/G2/H2 buttons within AddNavigationButtons.
+    * Added placeholder text ("All: TBC", "Active: TBC", "Archive: TBC") with Font Size 9 to J2, K2, L2 via AddNavigationButtons.
+    * Added left-aligned timestamp ("Refreshed: ...") with Font Size 9 to N2 via AddNavigationButtons.
+    * Removed all cell merges from Row 2 via SetupDashboard.
+    * Added code to clear Row 2 shapes, content, and merges within AddNavigationButtons before creating new elements.
+    * (Optional) Added standardized column width settings to the end of SetupDashboard to support new Row 2 layout.
+
+2.  Feature: Enhanced & Robust Button Creation (Module_Dashboard::ModernButton)
+    * Refactored ModernButton from a Sub to a Public Function returning the created Shape object.
+    * Modified ModernButton signature to accept targetCell As Range and ByVal buttonWidth As Double. Added ByVal to string parameters.
+    * Added explicit code within ModernButton to force Fill/Font visibility and ZOrder.
+    * Updated AddNavigationButtons to correctly call ModernButton Function, pass arguments, capture shape, and modify it directly.
+
+3.  Feature: Engagement Phase Validation & Auto-Complete System
+    * Created master list of all valid phases on "Lists" sheet, defined by named range `PHASE_LIST`.
+    * Added `modUtilities::AddPhaseValidation` subroutine to apply List Data Validation.
+    * Added `modUtilities::GetPhaseFromPrefix` helper function.
+    * Added `Workbook_SheetChange` event handler to `ThisWorkbook` to validate/auto-correct/auto-complete entries against `PHASE_LIST`, reject invalid/ambiguous entries, and prompt for "Other (Active)"/"Other (Archive)".
+    * Added "Other (Active)" and "Other (Archive)" to `PHASE_LIST`.
+
+4.  Fix: UI Consistency Across Sheets (Module_Dashboard::RefreshDashboard, modArchival::ApplyViewFormatting)
+    * Removed obsolete Module_Dashboard::SetupDashboardUI_EndRefresh subroutine and calls.
+    * Added new Step 9 block to Module_Dashboard::RefreshDashboard to explicitly set standard row heights and call modArchival.AddNavigationButtons for main dashboard.
+    * Confirmed modArchival::ApplyViewFormatting also sets standard row heights and background color.
+
+5.  Fix: Active/Archive Filtering Logic (`modArchival`)
+    * Replaced `IsPhaseActive` and `IsPhaseArchived` with simplified versions relying only on `ACTIVE_PHASES` constant.
+    * Updated `ACTIVE_PHASES` constant to include `"|OTHER (ACTIVE)|"`. (Note: Final verification of filtering results still pending).
+
+6.  Fix: Date Formatting on Dashboard (Module_Dashboard::RefreshDashboard)
+    * Added explicit .NumberFormat = "mm/dd/yyyy" for date columns (E, F, M) in Step 7.
+
+7.  Fix: Conditional Formatting (`Module_Dashboard::ApplyStageFormatting`)
+    * Added distinct Conditional Formatting rules for "Other (Active)" and "Other (Archive)".
+
+8.  Fix: Multiple Compile Errors
+    * Resolved various compile errors by correcting signatures, calls, removing obsolete code, and fixing array/comment syntax.
+
+9.  Refactoring/Code Quality:
+    * Introduced `btnDefs` array in `AddNavigationButtons`.
+    * Improved shape handling in `AddNavigationButtons`.
+    * Added enhanced logging to `CopyFilteredRows` filter loop.
+    * Moved helper functions (`GetPhaseFromPrefix`, `AddPhaseValidation`, `GetDataRowCount`, `UpdateAllViewCounts`) to new `modUtilities` module.
+    * Added detailed header comments to functions/subs in `modUtilities`.
+
+Pending for v4.0.0 Completion (on this branch before merge):
+* Final verification that non-blank, non-active phases (e.g., Second F/U) are correctly filtered to Archive.
+* Implementation of logic to calculate and pass real Total/Active/Archive counts to `UpdateAllViewCounts`.
+

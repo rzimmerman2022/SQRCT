@@ -95,6 +95,7 @@ Sub ListAllTables()
         Next lo
     Next ws
 End Sub
+
 '------------------------------------------------------------------------------
 ' DebugLog - Wrapper for detailed logging during debugging
 ' Writes to UserEditsLog sheet via LogUserEditsOperation AND prints to Immediate Window.
@@ -982,6 +983,9 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     On Error GoTo ErrorHandler ' Restore main error handler
     Application.ScreenUpdating = True
     DebugLog "RefreshDashboard", "Step 7: Finished final column/row/number formatting. Time: " & Format(Timer - t_Format, "0.00") & "s"
+    
+    ' *** ADD THIS CALL TO RE-APPLY VALIDATION ***
+    Call ApplyPhaseValidationToListColumn(ws, DB_COL_PHASE, 4) ' Apply to Dashboard Col L, starting Row 4
 
     '--- STEP 8: Apply Conditional Formatting, Protection and Freeze Panes ---
     DebugLog "RefreshDashboard", "Step 8: Applying conditional formatting and protection..."
@@ -1278,14 +1282,19 @@ End Sub
 ' SetupDashboard - Sets up static Rows 1 (Title) and 2 (Control Panel)
 ' *** This appears to be the user's preferred setup for Rows 1 & 2 ***
 '------------------------------------------------------------------------------
+'------------------------------------------------------------------------------
+' SetupDashboard - Sets up static Rows 1 (Title) and 2 (Control Panel)
+' REVISED: Removed Row 2 merges, Added optional column widths
+'------------------------------------------------------------------------------
 Public Sub SetupDashboard(ws As Worksheet)
-     LogUserEditsOperation "SetupDashboard: Setting up Title (Row 1) and Control Panel (Row 2)." ' Added Log
+     LogUserEditsOperation "SetupDashboard: Setting up Title (Row 1) and Control Panel (Row 2)."
      Application.ScreenUpdating = False
      On Error Resume Next ' Ignore errors if sheet is protected
 
      ' --- Row 1: Title Bar ---
      With ws.Range("A1:" & DB_COL_COMMENTS & "1") ' A1:N1
-         .ClearContents ' Clear previous content/merge
+         If .MergeCells Then .UnMerge ' Ensure unmerged before merging again
+         .ClearContents
          .Merge
          .Value = "STRATEGIC QUOTE RECOVERY & CONVERSION TRACKER"
          .HorizontalAlignment = xlCenter
@@ -1294,12 +1303,14 @@ Public Sub SetupDashboard(ws As Worksheet)
          .Font.Bold = True
          .Interior.Color = RGB(16, 107, 193) ' Blue background
          .Font.Color = RGB(255, 255, 255) ' White text
-         .RowHeight = 32
+         .RowHeight = 32 ' Use constant later? ROW_HGT_BANNER
      End With
 
      ' --- Row 2: Control Panel Area ---
      With ws.Range("A2:" & DB_COL_COMMENTS & "2") ' A2:N2
          .ClearContents
+         '--- REMOVED MERGE LINES for C2:D2, E2:F2 ---
+         .UnMerge ' Ensure entire row is unmerged initially
          .Interior.Color = RGB(245, 245, 245) ' Light grey background
          .Borders(xlEdgeTop).LineStyle = xlContinuous
          .Borders(xlEdgeTop).Weight = xlThin
@@ -1307,78 +1318,85 @@ Public Sub SetupDashboard(ws As Worksheet)
          .Borders(xlEdgeBottom).LineStyle = xlContinuous
          .Borders(xlEdgeBottom).Weight = xlThin
          .Borders(xlEdgeBottom).Color = RGB(200, 200, 200)
-         .RowHeight = 28
+         .RowHeight = 28 ' Use constant later? ROW_HGT_CONTROLS
          .VerticalAlignment = xlCenter
      End With
 
-     ' --- Row 2: "CONTROL PANEL" Label (User preferred A2 only) ---
+     ' --- Row 2: "CONTROL PANEL" Label (A2) ---
      With ws.Range("A2")
          .Value = "CONTROL PANEL"
          .Font.Bold = True
          .Font.Size = 10
-         .Font.Name = "Segoe UI" ' Or original font
+         .Font.Name = "Segoe UI"
          .HorizontalAlignment = xlCenter
          .VerticalAlignment = xlCenter
          .Interior.Color = RGB(70, 130, 180) ' Steel blue
          .Font.Color = RGB(255, 255, 255)
-         .ColumnWidth = 16 ' From user's code
+         ' .ColumnWidth = 16 ' Set width below if using optional block
          .Borders(xlEdgeRight).LineStyle = xlContinuous
          .Borders(xlEdgeRight).Weight = xlThin
          .Borders(xlEdgeRight).Color = RGB(200, 200, 200)
      End With
-     ' Clear B2 if A2 is used and merging is not desired
+     ' Clear B2 for spacing
       ws.Range("B2").ClearContents
 
-      ' --- Row 2: Placeholder for Timestamp (Merged G2:I2) ---
-      ws.Range("G2:I2").Merge ' Ensure merged
-
-      ' --- Row 2: Help (?) Icon ---
-      With ws.Range(DB_COL_COMMENTS & "2") ' N2
-          .Value = "?"
-          .Font.Bold = True
-          .Font.Size = 14
-          .HorizontalAlignment = xlCenter
-          .VerticalAlignment = xlCenter
-          .Font.Color = RGB(70, 130, 180) ' Match steel blue
+     ' --- Row 2: Help (?) Icon (N2) ---
+      With ws.Range(DB_COL_COMMENTS & "2") ' N2 (Timestamp now goes here via AddNavigationButtons)
+          ' Clear any old ? icon - timestamp will overwrite
+          .ClearContents
+          ' Optional: Keep ? if desired, place timestamp elsewhere (like M2)
+          ' .Value = "?"
+          ' .Font.Bold = True
+          ' ... etc
       End With
 
-      ' --- Buttons are created later by SetupDashboardUI_EndRefresh ---
+     ' --- Optional: Set standard widths for Row 2 elements ---
+     DebugLog "SetupDashboard", "Setting standard column widths for Row 2 elements..."
+     With ws.Columns
+        .Item("C").ColumnWidth = 15   ' Standard Refresh button width approx match
+        .Item("D").ColumnWidth = 15   ' Preserve UserEdits button width approx match
+        .Item("F").ColumnWidth = 11   ' All Items button width approx match
+        .Item("G").ColumnWidth = 11   ' Active button width approx match
+        .Item("H").ColumnWidth = 11   ' Archive button width approx match
+        .Item("J").ColumnWidth = 14   ' All Count label width
+        .Item("K").ColumnWidth = 14   ' Active Count label width
+        .Item("L").ColumnWidth = 14   ' Archive Count label width
+        .Item("N").ColumnWidth = 20   ' Timestamp label width
+     End With
+     ' --- End Optional Widths ---
 
      If Err.Number <> 0 Then LogUserEditsOperation "SetupDashboard: Note - Error setting up rows 1-2.": Err.Clear
      On Error GoTo 0
      Application.ScreenUpdating = True
  End Sub
 
-
 '------------------------------------------------------------------------------
 ' ModernButton - Creates styled buttons
-' REVISED: Changed to Function returning Shape, includes visibility/size fixes
+' REVISED: Function returning Shape, accepts Range & Width, includes ByVal & visibility fixes
 '------------------------------------------------------------------------------
-Public Function ModernButton(ws As Worksheet, targetCell As Range, ByVal buttonText As String, ByVal macroName As String) As Shape
-'                                                          ^^^^^^                      ^^^^^^
-    Dim btn As Shape ' <<< RENAMED variable to btn for clarity >>>
-    On Error GoTo ModernButtonErrorHandler ' Use local error handler
+Public Function ModernButton(ws As Worksheet, targetCell As Range, ByVal buttonText As String, ByVal macroName As String, ByVal buttonWidth As Double) As Shape
+    Dim btn As Shape
+    On Error GoTo ModernButtonErrorHandler
 
     ' --- Calculate Position and Size ---
-    Dim pad As Double: pad = 2
-    Dim btnLeft As Double: btnLeft = targetCell.Left + pad ' Use targetCell directly
-    Dim btnTop As Double: btnTop = targetCell.Top + pad   ' Use targetCell directly
-    Const BTN_WIDTH As Double = 80  ' Default width (can be overridden by caller)
-    Const BTN_HEIGHT As Double = 24 ' Fixed height
+    Dim pad As Double: pad = 2 ' Padding inside target cell
+    Dim btnLeft As Double: btnLeft = targetCell.Left + pad ' Position relative to target cell
+    Dim btnTop As Double: btnTop = targetCell.Top + pad   ' Position relative to target cell
+    Const BTN_HEIGHT As Double = 24 ' Fixed height for consistency
 
-    ' --- Add the shape ---
-    Set btn = Nothing ' Initialize
-    Set btn = ws.Shapes.AddShape(msoShapeRoundedRectangle, btnLeft, btnTop, BTN_WIDTH, BTN_HEIGHT)
+    ' --- Add the shape using PASSED IN width ---
+    Set btn = Nothing
+    Set btn = ws.Shapes.AddShape(msoShapeRoundedRectangle, btnLeft, btnTop, buttonWidth, BTN_HEIGHT) ' Use passed buttonWidth
     If btn Is Nothing Then
-        DebugLog "ModernButton", "ERROR: Failed to add shape for button '" & buttonText & "' on sheet '" & ws.Name & "'."
-        Set ModernButton = Nothing ' Return Nothing on failure
+        DebugLog "ModernButton", "ERROR: Failed to add shape for '" & buttonText & "'."
+        Set ModernButton = Nothing
         Exit Function
     End If
 
     ' --- Style the button ---
     With btn
-        ' Size (Caller can override width after function returns)
-         .Width = BTN_WIDTH
+        ' Size
+         .Width = buttonWidth ' Set width definitively
          .Height = BTN_HEIGHT
          .LockAspectRatio = msoFalse
 
@@ -1394,30 +1412,26 @@ Public Function ModernButton(ws As Worksheet, targetCell As Range, ByVal buttonT
         ' Rounded Corners
         .Adjustments(1) = 0.25
 
-        ' Text Formatting (Try TextFrame2 first)
-        On Error Resume Next ' Handle TextFrame2 potentially failing
-        With .TextFrame2
+        ' Text Formatting
+        On Error Resume Next
+        With .TextFrame2 ' Try modern text frame
             .TextRange.Text = buttonText
-            ' Force Visible Font Fill
-            .TextRange.Font.Fill.Visible = msoTrue
+            .TextRange.Font.Fill.Visible = msoTrue ' Force text visible
             .TextRange.Font.Fill.Solid
             .TextRange.Font.Fill.ForeColor.RGB = vbWhite ' Example white text
              If .TextRange.Font.Fill.Visible = msoFalse Then .TextRange.Font.Fill.Visible = msoTrue ' Double-check
-            ' Other font settings
             .TextRange.Font.Size = 9
             .HorizontalAnchor = msoAnchorCenter
             .VerticalAnchor = msoAnchorMiddle
             .TextRange.Font.Name = "Segoe UI"
             .WordWrap = msoFalse
         End With
-
-        ' Fallback to TextFrame if TextFrame2 failed
-        If Err.Number <> 0 Then
+        If Err.Number <> 0 Then ' Fallback to older text frame
             Err.Clear
-            DebugLog "ModernButton", "Note: TextFrame2 failed for button '" & buttonText & "', using TextFrame fallback."
+            DebugLog "ModernButton", "Note: TextFrame2 failed for '" & buttonText & "', using TextFrame fallback."
             With .TextFrame
                 .Characters.Text = buttonText
-                .Characters.Font.Color = vbWhite ' Fallback font color
+                .Characters.Font.Color = vbWhite ' Fallback color
                 .Characters.Font.Size = 9
                 .Characters.Font.Name = "Segoe UI"
                 .HorizontalAlignment = xlHAlignCenter
@@ -1427,11 +1441,11 @@ Public Function ModernButton(ws As Worksheet, targetCell As Range, ByVal buttonT
             End With
         End If
         Err.Clear
-        On Error GoTo ModernButtonErrorHandler ' Restore main handler
+        On Error GoTo ModernButtonErrorHandler ' Restore error handler for rest of With block
 
-        ' Placement & Action
-        .Placement = xlMoveAndSize ' Let caller handle centering if needed
-        .Name = "Temp_" & Replace(buttonText, " ", "_") ' Temporary Name - Caller will rename
+        ' Placement & Action & Temp Name
+        .Placement = xlMoveAndSize
+        .Name = "Temp_" & Replace(buttonText, " ", "_") ' Temporary - AddNavigationButtons will rename
         .OnAction = macroName
 
         ' Ensure it's on top
@@ -1439,7 +1453,7 @@ Public Function ModernButton(ws As Worksheet, targetCell As Range, ByVal buttonT
     End With
 
     ' --- Return the created shape ---
-    Set ModernButton = btn ' <<< ADDED THIS LINE >>>
+    Set ModernButton = btn
     Exit Function ' Normal Exit
 
 ModernButtonErrorHandler:
@@ -1918,37 +1932,37 @@ Private Sub CleanupOldBackups()
     Dim cutoffDate As Date: cutoffDate = Date - DAYS_TO_KEEP
     Dim backupBaseName As String: backupBaseName = USEREDITS_SHEET_NAME & "_Backup_"
     Dim oldSheets As New Collection ' Use Collection to store sheets for deletion
-    Dim sh As Worksheet
+    Dim Sh As Worksheet
     Dim datePart As String, backupDate As Date, deleteCount As Long
 
     LogUserEditsOperation "CleanupOldBackups: Checking for backups older than " & Format(cutoffDate, "yyyy-mm-dd") & "..."
 
     On Error Resume Next ' Ignore errors iterating sheets
 
-    For Each sh In ThisWorkbook.Sheets
-        If sh.Visible = xlSheetHidden And sh.Name Like backupBaseName & "????????_??????*" Then ' Match yyyymmdd_hhmmss pattern
-            datePart = Mid$(sh.Name, Len(backupBaseName) + 1, 8) ' yyyymmdd
+    For Each Sh In ThisWorkbook.Sheets
+        If Sh.Visible = xlSheetHidden And Sh.Name Like backupBaseName & "????????_??????*" Then ' Match yyyymmdd_hhmmss pattern
+            datePart = Mid$(Sh.Name, Len(backupBaseName) + 1, 8) ' yyyymmdd
             backupDate = DateSerial(1900, 1, 1) ' Default if parse fails
             Err.Clear
             backupDate = CDate(Format(datePart, "@@@@-@@-@@")) ' Parse only date part
 
              If Err.Number = 0 Then ' Successfully parsed date
                  If backupDate < cutoffDate Then
-                     oldSheets.Add sh ' Add sheet object to collection
+                     oldSheets.Add Sh ' Add sheet object to collection
                  End If
              Else
                   Err.Clear
              End If
         End If
-    Next sh
+    Next Sh
 
     If oldSheets.Count > 0 Then
         Application.DisplayAlerts = False ' Suppress delete confirmation prompts
-        For Each sh In oldSheets
+        For Each Sh In oldSheets
             On Error Resume Next ' Ignore error deleting single sheet
-            sh.Delete
+            Sh.Delete
             If Err.Number = 0 Then deleteCount = deleteCount + 1 Else Err.Clear
-        Next sh
+        Next Sh
         Application.DisplayAlerts = True
         LogUserEditsOperation "CleanupOldBackups: Deleted " & deleteCount & " old backup sheets (older than " & DAYS_TO_KEEP & " days)."
     Else
@@ -1956,7 +1970,7 @@ Private Sub CleanupOldBackups()
     End If
 
     On Error GoTo 0 ' Restore default error handling
-    Set oldSheets = Nothing: Set sh = Nothing
+    Set oldSheets = Nothing: Set Sh = Nothing
 End Sub
 
 '================================================================================
@@ -2046,7 +2060,7 @@ Private Sub ApplyStageFormatting(targetRng As Range)
     ' Using xlExpression with case-sensitive EXACT match as in user's code
     formulaBase = "=EXACT(" & firstCellAddress & ",""{PHASE}"")"
 
-    ' --- Define Rules (Copied from user's code) ---
+    ' --- Define Standard Phase Rules ---
     Set fc = targetRng.FormatConditions.Add(Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "First F/U"))
     If Not fc Is Nothing Then fc.Interior.Color = RGB(208, 230, 245)
 
@@ -2100,6 +2114,21 @@ Private Sub ApplyStageFormatting(targetRng As Range)
 
     Set fc = targetRng.FormatConditions.Add(Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "Closed"))
     If Not fc Is Nothing Then fc.Interior.Color = RGB(166, 28, 28)
+    
+        ' --- START: ADD RULES FOR "Other (...)" ---
+    ' Rule for "Other (Active)" - Subtle highlight, treated as active
+    Set fc = targetRng.FormatConditions.Add(Type:=xlCellValue, Operator:=xlEqual, Formula1:="=""Other (Active)""")
+    If Not fc Is Nothing Then
+        fc.Interior.Color = RGB(235, 245, 255) ' Very light blue tint
+        fc.Font.Italic = True
+    End If
+
+    ' Rule for "Other (Archive)" - Different subtle highlight, treated as archived
+    Set fc = targetRng.FormatConditions.Add(Type:=xlCellValue, Operator:=xlEqual, Formula1:="=""Other (Archive)""")
+    If Not fc Is Nothing Then
+        fc.Interior.Color = RGB(255, 245, 235) ' Very light orange/tan tint
+        fc.Font.Italic = True
+    End If
 
     If Err.Number <> 0 Then LogUserEditsOperation "ApplyStageFormatting: ERROR applying one or more format conditions. Error: " & Err.Description: Err.Clear
     On Error GoTo 0
@@ -2359,3 +2388,5 @@ ErrHandler:
     LogUserEditsOperation "ToggleWorkbookStructure ERR " & Err.Number & ": " & Err.Description
     ToggleWorkbookStructure = False ' Return False on error
 End Function
+
+
