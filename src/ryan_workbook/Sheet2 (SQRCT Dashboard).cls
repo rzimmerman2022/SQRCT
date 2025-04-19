@@ -7,24 +7,24 @@ Option Explicit
 ' --- Worksheet Event Handler ---
 
 ' This code runs automatically whenever a cell value is changed ON THIS SHEET.
-Private Sub Worksheet_Change(ByVal Target As Range)
+Private Sub Worksheet_Change(ByVal target As Range)
     ' --- Pre-Checks ---
-    If Target.Cells.CountLarge > 1 Then Exit Sub ' Exit if multiple cells changed
+    If target.Cells.CountLarge > 1 Then Exit Sub ' Exit if multiple cells changed
     ' Use Public Const from Module_Dashboard
-    If Intersect(Target, Me.Range(Module_Dashboard.DB_COL_PHASE & ":" & Module_Dashboard.DB_COL_COMMENTS)) Is Nothing Then Exit Sub ' Exit if outside L:N
-    If Target.Row < 4 Then Exit Sub ' Exit if header rows
+    If Intersect(target, Me.Range(Module_Dashboard.DB_COL_PHASE & ":" & Module_Dashboard.DB_COL_COMMENTS)) Is Nothing Then Exit Sub ' Exit if outside L:N
+    If target.Row < 4 Then Exit Sub ' Exit if header rows
 
     ' --- Prevent Event Recursion & Set Up Error Handling ---
     Application.EnableEvents = False
     On Error GoTo SafeExit_WorksheetChange
 
     ' --- Log the Initial Change ---
-    Module_Dashboard.LogUserEditsOperation "Worksheet_Change Triggered: Cell " & Target.Address(False, False) & " changed." ' Use Public Logger
+    Module_Dashboard.LogUserEditsOperation "Worksheet_Change Triggered: Cell " & target.Address(False, False) & " changed." ' Use Public Logger
 
     ' --- Get the Document Number for the Changed Row ---
     Dim docNum As String
     Dim cleanedDocNum As String
-    docNum = CStr(Me.Cells(Target.Row, "A").Value2) ' Get DocNum from Col A of changed row
+    docNum = CStr(Me.Cells(target.Row, "A").Value2) ' Get DocNum from Col A of changed row
     cleanedDocNum = Module_Dashboard.CleanDocumentNumber(docNum) ' Use Public Cleaner
 
     ' --- Process only if a valid Document Number exists ---
@@ -77,12 +77,12 @@ Private Sub Worksheet_Change(ByVal Target As Range)
         End If
 
         ' --- Update UserEdits Row with Data from Changed Dashboard Cell(s) ---
-        Module_Dashboard.LogUserEditsOperation "Worksheet_Change: Updating UserEdits Row " & destRow & " from Dashboard Row " & Target.Row & "."
+        Module_Dashboard.LogUserEditsOperation "Worksheet_Change: Updating UserEdits Row " & destRow & " from Dashboard Row " & target.Row & "."
         On Error Resume Next ' Handle potential errors writing to UserEdits
         ' Use Public Constants from Module_Dashboard
-        wsEdits.Cells(destRow, Module_Dashboard.UE_COL_PHASE).Value = Me.Cells(Target.Row, Module_Dashboard.DB_COL_PHASE).Value           ' Update Phase (B <- L)
-        wsEdits.Cells(destRow, Module_Dashboard.UE_COL_LASTCONTACT).Value = Me.Cells(Target.Row, Module_Dashboard.DB_COL_LASTCONTACT).Value ' Update LastContact (C <- M)
-        wsEdits.Cells(destRow, Module_Dashboard.UE_COL_COMMENTS).Value = Me.Cells(Target.Row, Module_Dashboard.DB_COL_COMMENTS).Value      ' Update Comments (D <- N)
+        wsEdits.Cells(destRow, Module_Dashboard.UE_COL_PHASE).Value = Me.Cells(target.Row, Module_Dashboard.DB_COL_PHASE).Value           ' Update Phase (B <- L)
+        wsEdits.Cells(destRow, Module_Dashboard.UE_COL_LASTCONTACT).Value = Me.Cells(target.Row, Module_Dashboard.DB_COL_LASTCONTACT).Value ' Update LastContact (C <- M)
+        wsEdits.Cells(destRow, Module_Dashboard.UE_COL_COMMENTS).Value = Me.Cells(target.Row, Module_Dashboard.DB_COL_COMMENTS).Value      ' Update Comments (D <- N)
         wsEdits.Cells(destRow, Module_Dashboard.UE_COL_SOURCE).Value = Module_Identity.GetWorkbookIdentity()                 ' Update Source (E)
         wsEdits.Cells(destRow, Module_Dashboard.UE_COL_TIMESTAMP).Value = Format$(Now(), "yyyy-mm-dd hh:nn:ss") ' Update Timestamp (F)
         If Err.Number <> 0 Then
@@ -92,18 +92,20 @@ Private Sub Worksheet_Change(ByVal Target As Range)
         On Error GoTo SafeExit_WorksheetChange ' Restore main handler
 
     Else
-        Module_Dashboard.LogUserEditsOperation "Worksheet_Change: Change ignored - Blank or invalid Document Number in Row " & Target.Row & ", Column A ('" & docNum & "')."
+        Module_Dashboard.LogUserEditsOperation "Worksheet_Change: Change ignored - Blank or invalid Document Number in Row " & target.Row & ", Column A ('" & docNum & "')."
     End If ' End If cleanedDocNum <> ""
 
 SafeExit_WorksheetChange:
     If Err.Number <> 0 Then
         MsgBox "An error occurred while trying to save your change to the UserEdits sheet:" & vbCrLf & vbCrLf & _
                "Error " & Err.Number & ": " & Err.Description, vbExclamation, "Worksheet Change Error"
-        Module_Dashboard.LogUserEditsOperation "ERROR in Worksheet_Change: [" & Err.Number & "] " & Err.Description & " for Target " & Target.Address
+        Module_Dashboard.LogUserEditsOperation "ERROR in Worksheet_Change: [" & Err.Number & "] " & Err.Description & " for Target " & target.Address
     End If
     ' --- Cleanup & Re-enable Events ---
     Set rowDict = Nothing ' Release new dictionary
     Set wsEdits = Nothing
     Application.EnableEvents = True
 End Sub
+
+
 

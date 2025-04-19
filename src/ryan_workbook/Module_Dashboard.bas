@@ -38,8 +38,8 @@ Public Const DB_COL_PHASE As String = "L" ' PUBLIC needed for modArchival filter
 Public Const DB_COL_LASTCONTACT As String = "M" ' Keep Public for consistency or future use
 Public Const DB_COL_COMMENTS As String = "N" ' PUBLIC needed for modArchival range definitions
 
-' --- Debug Flags ---
-Public Const DEBUG_WorkflowLocation As Boolean = False ' Keep Public for easy access, set to False
+Public Const DEBUG_LOGGING As Boolean = True
+
 
 '===============================================================================
 '                         0. CORE HELPER ROUTINES
@@ -86,6 +86,40 @@ Public Function BuildRowIndexDict(ws As Worksheet) As Object
     LogUserEditsOperation "BuildRowIndexDict: Built dictionary with " & dict.Count & " row index entries for sheet '" & ws.Name & "'."
     Set BuildRowIndexDict = dict
 End Function
+
+Sub ListAllTables()
+    Dim ws As Worksheet, lo As ListObject
+    For Each ws In ThisWorkbook.Worksheets
+        For Each lo In ws.ListObjects
+            Debug.Print ws.Name, lo.Name
+        Next lo
+    Next ws
+End Sub
+'------------------------------------------------------------------------------
+' DebugLog - Wrapper for detailed logging during debugging
+' Writes to UserEditsLog sheet via LogUserEditsOperation AND prints to Immediate Window.
+' Controlled by DEBUG_LOGGING constant.
+'------------------------------------------------------------------------------
+Public Sub DebugLog(procName As String, msg As String)
+    If Not DEBUG_LOGGING Then Exit Sub ' Exit if detailed logging is turned off
+
+    Dim logMsg As String
+    logMsg = "[" & procName & "] " & msg ' Format the message
+
+    ' Also print to Immediate Window (Ctrl+G) as a reliable fallback/real-time view
+    Debug.Print Now(); " "; logMsg
+
+    ' Attempt to write to the log sheet using the original logger
+    On Error Resume Next ' Temporarily ignore errors from the logger itself
+    LogUserEditsOperation logMsg ' Call the original logger
+    If Err.Number <> 0 Then
+        ' If main logger failed, print a warning to Immediate Window
+        Debug.Print Now(); " [DebugLog] WARNING: Call to LogUserEditsOperation failed. Error: " & Err.Description
+        Err.Clear
+    End If
+    On Error GoTo 0 ' Restore default error handling
+End Sub
+
 '------------------------------------------------------------------------------
 ' ResolvePhase - Determines the correct Engagement Phase to display on dashboard
 '------------------------------------------------------------------------------
@@ -139,39 +173,83 @@ End Sub
 ' It tries the table first, then a named range.
 '-------------------------------------------------------------------
 Private Function GetMQF_HeaderMap() As Object
-    Dim d As Object: Set d = CreateObject("Scripting.Dictionary")
+    Dim d       As Object:    Set d = CreateObject("Scripting.Dictionary")
     d.CompareMode = vbTextCompare
-    
-    Dim lo As ListObject, rng As Range, ws As Worksheet
-    Dim hdrRow As Variant, c As Long
-    
-    '–– 1) Table?
+
+    Dim lo      As ListObject
+    Dim ws      As Worksheet
+    Dim hdrRow  As Variant
+    Dim c       As Long
+
+    ' 1) Try to find the table by iterating every ListObject on every sheet
+    On Error Resume Next ' Added safety in case of issues accessing ListObjects collection itself
     For Each ws In ThisWorkbook.Worksheets
-        On Error Resume Next
-        Set lo = ws.ListObjects(MASTER_QUOTES_FINAL_SOURCE)
-        On Error GoTo 0
-        If Not lo Is Nothing Then
-            hdrRow = lo.HeaderRowRange.Value
-            Exit For
+        If ws.ListObjects.Count > 0 Then ' Only check if the sheet HAS listobjects
+            For Each lo In ws.ListObjects
+                If lo.Name = MASTER_QUOTES_FINAL_SOURCE Then
+                    hdrRow = lo.HeaderRowRange.Value
+                    Err.Clear ' Clear any error from HeaderRowRange access
+                    Exit For ' Exit inner loop once found
+                End If
+            Next lo
         End If
+        If Not IsEmpty(hdrRow) Then Exit For ' Exit outer loop if found
     Next ws
-    
-    '–– 2) Named Range?
-    If lo Is Nothing Then
-        On Error Resume Next
+    On Error GoTo 0 ' Restore default error handling
+
+    ' 2) If we still have nothing, fall back to a Named Range
+    If IsEmpty(hdrRow) Then
+        Dim rng As Range ' Declare here
+        On Error Resume Next ' Check for named range existence
+        Set rng = Nothing ' Reset rng
         Set rng = ThisWorkbook.Names(MASTER_QUOTES_FINAL_SOURCE).RefersToRange
-        On Error GoTo 0
-        If Not rng Is Nothing Then hdrRow = rng.rows(1).Value
+        On Error GoTo 0 ' Restore default error handling
+
+        If Not rng Is Nothing Then
+             On Error Resume Next ' Handle error reading row 1 value
+             hdrRow = rng.rows(1).Value
+             If Err.Number <> 0 Then
+                 LogUserEditsOperation "GetMQF_HeaderMap: Found Named Range '" & MASTER_QUOTES_FINAL_SOURCE & "' but failed to read header row: " & Err.Description
+                 hdrRow = Empty ' Ensure hdrRow is empty if read failed
+                 Err.Clear
+             End If
+             On Error GoTo 0
+        Else
+            ' Neither Table nor Named Range found - log and bail out
+            LogUserEditsOperation "GetMQF_HeaderMap: CRITICAL - Could not find source '" & MASTER_QUOTES_FINAL_SOURCE & "' as Table or Named Range."
+            Set GetMQF_HeaderMap = d ' Return empty dictionary
+            Exit Function
+        End If
     End If
-    
-    '–– Build dictionary
+
+    ' 3) Build the dictionary from the header row array
     If IsArray(hdrRow) Then
-        For c = 1 To UBound(hdrRow, 2)
-            If Trim$(hdrRow(1, c) & "") <> "" Then d(hdrRow(1, c)) = c
-        Next c
+         On Error Resume Next ' Handle potential errors accessing array bounds/values
+         For c = 1 To UBound(hdrRow, 2)
+             Dim headerName As String
+             headerName = Trim$(hdrRow(1, c) & "") ' Ensure it's a string and trimmed
+             If Len(headerName) > 0 Then
+                 If Not d.Exists(headerName) Then
+                     d.Add headerName, c
+                 Else
+                     LogUserEditsOperation "GetMQF_HeaderMap: Warning - Duplicate header '" & headerName & "' found. Using first instance."
+                 End If
+             End If
+         Next c
+         If Err.Number <> 0 Then
+              LogUserEditsOperation "GetMQF_HeaderMap: Error building dictionary from header row array: " & Err.Description
+              Err.Clear
+         End If
+         On Error GoTo 0
+    ElseIf Not IsEmpty(hdrRow) Then ' Handle case where header range might be single cell
+         Dim headerNameSingle As String
+         headerNameSingle = Trim$(hdrRow & "")
+         If Len(headerNameSingle) > 0 Then d(headerNameSingle) = 1
+    Else
+         LogUserEditsOperation "GetMQF_HeaderMap: Header row data (hdrRow) was empty or invalid after source lookup."
     End If
-    
-    Set GetMQF_HeaderMap = d            ' May be empty – call-site checks
+
+    Set GetMQF_HeaderMap = d ' Return the dictionary (might be empty if errors occurred)
 End Function
 
 ' Quick wrapper to fetch an index or raise a clear log + error
@@ -713,219 +791,247 @@ Public Sub Button_RefreshDashboard_SaveAndRestoreEdits()
     ' Standard workflow: Saves dashboard edits (L-N) -> Refreshes A-L -> Restores all UserEdits (L-N)
     RefreshDashboard PreserveUserEdits:=False
 End Sub
-
-Public Sub Button_RefreshDashboard_PreserveUserEdits()
-    ' Preserve workflow: Refreshes A-L -> Restores all UserEdits (L-N) -> Does NOT save current dashboard edits first
-    RefreshDashboard PreserveUserEdits:=True
-End Sub
-
 '------------------------------------------------------------------------------
 ' RefreshDashboard — Master routine orchestrating the entire refresh
-' *** REFACTORED to use in-memory array/dictionary merge for data population ***
+' REVISED: Includes Number Formatting Fix, Corrected Step 9 for UI Consistency
 '------------------------------------------------------------------------------
 Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
 
     Dim ws As Worksheet, wsEdits As Worksheet
     Dim lastRow As Long ' Last row *on the dashboard sheet* after writing data
     Dim t_Start As Double, t_Build As Double, t_Write As Double, t_Sort As Double
-    Dim t_Format As Double, t_Protect As Double, t_TextOnly As Double ' Timers
+    Dim t_Format As Double, t_Protect As Double, t_TextOnly As Double, t_Archival As Double ' Timers
     Dim backupCreated As Boolean
     Dim calcState As XlCalculation: calcState = Application.Calculation ' Store current calculation state
     Dim eventsState As Boolean: eventsState = Application.EnableEvents ' Store current event state
+    Dim screenState As Boolean: screenState = Application.ScreenUpdating ' Store current screen state
     Dim currentSheet As Worksheet: Set currentSheet = ActiveSheet ' Remember active sheet
     Dim arrFinalData As Variant ' Array to hold the merged data for the dashboard
     Dim wbWasLocked As Boolean
+    Dim arrIsEmpty As Boolean ' Declare here
+    Dim errNum As Long, errDesc As String, errLine As Long ' For Error Handler
 
     t_Start = Timer ' Start overall timer
-    LogUserEditsOperation "--------------------------------------------------"
-    LogUserEditsOperation "Starting Dashboard Refresh (Refactored). Mode: " & IIf(PreserveUserEdits, "PreserveUserEdits", "SaveAndRestore")
+    DebugLog "RefreshDashboard", "ENTER. Mode: " & IIf(PreserveUserEdits, "PreserveUserEdits", "SaveAndRestore")
 
     ' --- Error Handling & Application Settings ---
     On Error GoTo ErrorHandler ' Master error handler for the refresh process
+    DebugLog "RefreshDashboard", "Applying initial application settings (ScreenUpdating=False, EnableEvents=False, Calc=Manual, Alerts=False)..."
     Application.ScreenUpdating = False
     Application.EnableEvents = False ' Turn off events during manipulation
-    Application.Calculation = xlCalculationManual ' Manual calculation still good practice during VBA execution
-    Application.DisplayAlerts = False ' Suppress alerts
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
 
     ' --- Check & Handle Workbook Structure Protection ---
-    wbWasLocked = ThisWorkbook.ProtectStructure ' Check if currently protected
+    DebugLog "RefreshDashboard", "Checking Workbook Structure Protection..."
+    wbWasLocked = ThisWorkbook.ProtectStructure
+    DebugLog "RefreshDashboard", "Workbook Structure Locked = " & wbWasLocked
     If wbWasLocked Then
-        LogUserEditsOperation "RefreshDashboard: Workbook structure is protected. Attempting temporary unlock..."
+        DebugLog "RefreshDashboard", "Workbook structure is protected. Attempting temporary unlock..."
         If Not ToggleWorkbookStructure(False) Then ' Call helper to Unlock Structure
-            ' ToggleWorkbookStructure already logs the error if it fails
             MsgBox "Failed to unprotect workbook structure. Required for creating backup/log/setup sheets. Aborting.", vbCritical, "Structure Protection Error"
             GoTo Cleanup ' Abort if unlock fails
         End If
+         DebugLog "RefreshDashboard", "Workbook structure unlocked."
     End If
-    ' Structure is now guaranteed to be unprotected (or was already)
 
     ' --- Attempt pre-emptive backup ---
-    backupCreated = CreateUserEditsBackup(Format(Now, "yyyymmdd_hhmmss")) ' Pass ONLY timestamp as suffix
-    LogUserEditsOperation "Pre-refresh UserEdits backup created: " & backupCreated
+    DebugLog "RefreshDashboard", "Attempting pre-refresh backup..."
+    backupCreated = CreateUserEditsBackup(Format(Now, "yyyymmdd_hhmmss"))
+    DebugLog "RefreshDashboard", "Pre-refresh UserEdits backup created: " & backupCreated
 
     '--- STEP 1: Ensure UserEdits Sheet Exists and Get Reference ---
+    DebugLog "RefreshDashboard", "Step 1: SetupUserEditsSheet..."
     SetupUserEditsSheet ' Creates or verifies the UserEdits sheet structure
-    Set wsEdits = Nothing ' Ensure variable is clear before setting
-    On Error Resume Next ' Handle potential error getting sheet reference
+    Set wsEdits = Nothing
+    On Error Resume Next
     Set wsEdits = ThisWorkbook.Sheets(USEREDITS_SHEET_NAME)
-    On Error GoTo ErrorHandler ' Restore main error handler
+    On Error GoTo ErrorHandler
     If wsEdits Is Nothing Then
+        DebugLog "RefreshDashboard", "CRITICAL ERROR - Could not find or create '" & USEREDITS_SHEET_NAME & "'. Aborting."
         MsgBox "CRITICAL ERROR: Could not find or create the '" & USEREDITS_SHEET_NAME & "' sheet. Aborting refresh.", vbCritical, "Refresh Aborted"
-        GoTo Cleanup ' Cannot proceed
+        GoTo Cleanup
     End If
+    DebugLog "RefreshDashboard", "Step 1: UserEdits sheet object obtained."
 
     '--- STEP 2: Save Current Dashboard Edits (L-N) to UserEdits (if not preserving) ---
     If Not PreserveUserEdits Then
-        LogUserEditsOperation "SaveAndRestore Mode: Saving current dashboard edits (L-N) to UserEdits sheet..."
-        SaveUserEditsFromDashboard ' Saves L-N from Dashboard to UserEdits A-F using corrected version
-        LogUserEditsOperation "Finished saving dashboard edits."
+        DebugLog "RefreshDashboard", "Step 2: SaveAndRestore Mode - Calling SaveUserEditsFromDashboard..."
+        SaveUserEditsFromDashboard
+        DebugLog "RefreshDashboard", "Step 2: Finished SaveUserEditsFromDashboard."
     Else
-        LogUserEditsOperation "PreserveUserEdits Mode: Skipping save of dashboard edits."
+        DebugLog "RefreshDashboard", "Step 2: PreserveUserEdits Mode - Skipping save of dashboard edits."
     End If
 
     '--- STEP 3: Get or Create Dashboard Sheet & Prepare Layout ---
-    Set ws = GetOrCreateDashboardSheet(DASHBOARD_SHEET_NAME) ' Finds or creates the main dashboard sheet
+    DebugLog "RefreshDashboard", "Step 3: GetOrCreateDashboardSheet..."
+    Set ws = GetOrCreateDashboardSheet(DASHBOARD_SHEET_NAME)
     If ws Is Nothing Then
+         DebugLog "RefreshDashboard", "CRITICAL ERROR - Could not find or create '" & DASHBOARD_SHEET_NAME & "'. Aborting."
          MsgBox "CRITICAL ERROR: Could not find or create the '" & DASHBOARD_SHEET_NAME & "' sheet. Aborting refresh.", vbCritical, "Refresh Aborted"
-         GoTo Cleanup ' Cannot proceed
+         GoTo Cleanup
     End If
+    DebugLog "RefreshDashboard", "Step 3: Dashboard sheet object obtained: '" & ws.Name & "'"
 
-    On Error Resume Next ' Ignore error if already unprotected
-    ws.Unprotect ' Unprotect the DASHBOARD SHEET for updates
-    On Error GoTo ErrorHandler ' Restore error handler
+    On Error Resume Next
+    ws.Unprotect Password:=PW_WORKBOOK
+    If Err.Number <> 0 Then DebugLog "RefreshDashboard", "Warning: Failed to unprotect dashboard sheet. Err=" & Err.Number: Err.Clear
+    On Error GoTo ErrorHandler
 
-    CleanupDashboardLayout ws    ' Clears rows 4+ data, preserves rows 1-3
-    InitializeDashboardLayout ws ' Sets headers A-N, ensures N4+ WrapText=False, etc.
+    DebugLog "RefreshDashboard", "Step 3: CleanupDashboardLayout..."
+    CleanupDashboardLayout ws
+    DebugLog "RefreshDashboard", "Step 3: InitializeDashboardLayout..."
+    InitializeDashboardLayout ws
 
-    '--- STEP 4 (NEW): Build Final Data Array In Memory ---
-    LogUserEditsOperation "Building final data array in memory..."
+    '--- STEP 4: Build Final Data Array In Memory ---
+    DebugLog "RefreshDashboard", "Step 4: BuildDashboardDataArray..."
     t_Build = Timer
-    arrFinalData = BuildDashboardDataArray() ' Calls the new function
+    arrFinalData = BuildDashboardDataArray()
+    DebugLog "RefreshDashboard", "Step 4: Finished BuildDashboardDataArray. Time: " & Format(Timer - t_Build, "0.00") & "s"
 
-    ' Check if BuildDashboardDataArray returned a valid array
     If Not IsArray(arrFinalData) Then
-         LogUserEditsOperation "BuildDashboardDataArray failed to return valid data. Aborting."
+         DebugLog "RefreshDashboard", "CRITICAL ERROR - BuildDashboardDataArray failed to return valid data. Aborting."
          MsgBox "Critical error building dashboard data array. Please check logs or source data.", vbCritical, "Refresh Aborted"
          GoTo Cleanup
     End If
-    ' Check if array has at least one dimension (LBound will error on empty Variant)
-    Dim arrIsEmpty As Boolean
+    arrIsEmpty = False
     On Error Resume Next
     arrIsEmpty = (LBound(arrFinalData, 1) > UBound(arrFinalData, 1))
-    On Error GoTo ErrorHandler ' Restore main handler
+    On Error GoTo ErrorHandler
+    DebugLog "RefreshDashboard", "Step 4: Data Array IsArray=" & IsArray(arrFinalData) & ", IsEmpty=" & arrIsEmpty
     If arrIsEmpty Then
-         LogUserEditsOperation "BuildDashboardDataArray returned empty data array. Dashboard will be empty."
-         ' Allow proceeding to show an empty dashboard
+         DebugLog "RefreshDashboard", "BuildDashboardDataArray returned empty data array. Dashboard will be empty."
     End If
-    LogUserEditsOperation "Finished building data array. Time: " & Format(Timer - t_Build, "0.00") & "s"
 
-    '--- STEP 5 (NEW): Write Data Array to Dashboard ---
-    LogUserEditsOperation "Writing data array to dashboard sheet..."
+    '--- STEP 5: Write Data Array to Dashboard ---
+    DebugLog "RefreshDashboard", "Step 5: Writing data array to dashboard sheet..."
     t_Write = Timer
-    ' Clear target area first
     ws.Range("A4:" & DB_COL_COMMENTS & ws.rows.Count).ClearContents
-    If Not arrIsEmpty Then ' Check if array has rows before writing
-        ' Write the entire array in one operation
+    If Not arrIsEmpty Then
+        DebugLog "RefreshDashboard", "Step 5: Resizing target range A4 to " & UBound(arrFinalData, 1) & " rows, " & UBound(arrFinalData, 2) & " cols."
         ws.Range("A4").Resize(UBound(arrFinalData, 1), UBound(arrFinalData, 2)).Value = arrFinalData
-        LogUserEditsOperation "Finished writing " & UBound(arrFinalData, 1) & " rows to dashboard."
+        DebugLog "RefreshDashboard", "Step 5: Finished writing " & UBound(arrFinalData, 1) & " rows to dashboard."
     Else
-         LogUserEditsOperation "Skipping write to dashboard (data array was empty)."
+         DebugLog "RefreshDashboard", "Step 5: Skipping write to dashboard (data array was empty)."
     End If
-    LogUserEditsOperation "Finished writing data. Time: " & Format(Timer - t_Write, "0.00") & "s"
+    DebugLog "RefreshDashboard", "Step 5: Finished writing data. Time: " & Format(Timer - t_Write, "0.00") & "s"
 
     ' --- STEP 6: Calculate Last Row and Sort Dashboard Data ---
-    ' Get last row *after* writing data values
+    lastRow = 0
+    On Error Resume Next
     lastRow = ws.Cells(ws.rows.Count, "A").End(xlUp).Row
-    LogUserEditsOperation "Dashboard now has " & IIf(lastRow < 4, 0, lastRow - 3) & " data rows (Row " & lastRow & ")."
+    On Error GoTo ErrorHandler
+    DebugLog "RefreshDashboard", "Step 6: Calculated lastRow = " & lastRow & ". Dashboard now has " & IIf(lastRow < 4, 0, lastRow - 3) & " data rows."
 
-    ' (REMOVED: ws.Calculate - No longer needed)
-    ' (REMOVED: Formula freezing (.Value=.Value) - No longer needed)
-
-    If lastRow >= 5 Then ' Need at least 2 data rows to sort meaningfully
-        LogUserEditsOperation "Sorting dashboard rows 4:" & lastRow & "..."
+    If lastRow >= 5 Then
+        DebugLog "RefreshDashboard", "Step 6: Sorting dashboard rows 4:" & lastRow & "..."
         t_Sort = Timer
-        SortDashboardData ws, lastRow ' Sorts the values written to the sheet
-        LogUserEditsOperation "Finished sorting. Time: " & Format(Timer - t_Sort, "0.00") & "s"
+        SortDashboardData ws, lastRow
+        DebugLog "RefreshDashboard", "Step 6: Finished sorting. Time: " & Format(Timer - t_Sort, "0.00") & "s"
     Else
-        LogUserEditsOperation "Skipping sort (less than 2 data rows)."
+        DebugLog "RefreshDashboard", "Step 6: Skipping sort (less than 2 data rows)."
     End If
-    ' Recalculate lastRow *after* sorting
-    lastRow = ws.Cells(ws.rows.Count, "A").End(xlUp).Row
+    On Error Resume Next
+    lastRow = ws.Cells(ws.rows.Count, "A").End(xlUp).Row ' Recalculate after sort
+    On Error GoTo ErrorHandler
+    DebugLog "RefreshDashboard", "Step 6: lastRow after sort = " & lastRow
 
-    ' (REMOVED: PopulateWorkflowLocation - Handled by BuildDashboardDataArray)
-    ' (REMOVED: RestoreUserEditsToDashboard - Handled by BuildDashboardDataArray)
+    '--- STEP 7: Apply Final Column Widths, Row Height, AND Number Formats ---
+    DebugLog "RefreshDashboard", "Step 7: Applying final column widths/row height/number formats..."
+    t_Format = Timer
+    Application.ScreenUpdating = False
+    On Error Resume Next ' Local error handling for formatting section
 
-    '--- STEP 7: Apply Final Column Widths and Header Row Height ---
-    LogUserEditsOperation "Applying final column widths (AutoFit A:M, Re-AutoFit D/E/F, Constrain C/D, Fixed F/N, Fixed Row3)..."
-    t_Format = Timer ' Start timer for formatting section
-    Application.ScreenUpdating = False ' Keep off for formatting
-    On Error Resume Next ' Local error handling
-
-    ' 7.1: Initial AutoFit for ALL data columns (A through M - N is fixed later)
+    ' Column Widths
     ws.Columns("A:" & DB_COL_LASTCONTACT).AutoFit ' AutoFit A through M
-
-    ' 7.2: Explicitly Re-AutoFit Amount and Date columns D, E, F
     ws.Columns("D").AutoFit
     ws.Columns("E").AutoFit
     ws.Columns("F").AutoFit
-
-    ' 7.3: NOW, impose constraints on Button/Amount columns (C and D)
     Const MIN_BUTTON_WIDTH As Double = 20
     Const MAX_BUTTON_WIDTH As Double = 30
-
-    ' -- Constrain Column C (Button 1) --
     If ws.Columns("C").ColumnWidth < MIN_BUTTON_WIDTH Then ws.Columns("C").ColumnWidth = MIN_BUTTON_WIDTH
     If ws.Columns("C").ColumnWidth > MAX_BUTTON_WIDTH Then ws.Columns("C").ColumnWidth = MAX_BUTTON_WIDTH
-    ' -- Constrain Column D (Button 2 / Amount) --
     If ws.Columns("D").ColumnWidth < MIN_BUTTON_WIDTH Then ws.Columns("D").ColumnWidth = MIN_BUTTON_WIDTH
     If ws.Columns("D").ColumnWidth > MAX_BUTTON_WIDTH Then ws.Columns("D").ColumnWidth = MAX_BUTTON_WIDTH
-
-    ' 7.4: Set FIXED width for Column F (First Date Pulled) - Override AutoFit
-    ws.Columns("F").ColumnWidth = 10.5   ' Keep date column compact
-
-    ' 7.5: Set FIXED width for Comments column N
+    ws.Columns("F").ColumnWidth = 10.5   ' Fixed width for First Date Pulled
     ws.Columns(DB_COL_COMMENTS).ColumnWidth = 45 ' Fixed width for Comments (N)
 
-    ' 7.6: Set FIXED height and NO WRAP/NO SHRINK for Header Row 3
+    ' Header Row 3 Format
     With ws.rows(3)
-        .RowHeight = 15       ' Set standard height
-        .WrapText = False     ' Ensure header doesn't wrap
+        .RowHeight = 15
+        .WrapText = False
     End With
-    ws.Range("A3:" & DB_COL_COMMENTS & "3").ShrinkToFit = False ' Ensure ShrinkToFit is OFF
+    ws.Range("A3:" & DB_COL_COMMENTS & "3").ShrinkToFit = False
 
-    ' Error Check & Restore
+    ' *** ADDED/CONFIRMED: Apply Number Formats to Dashboard ***
+    DebugLog "RefreshDashboard", "Step 7: Applying specific number formats to dashboard..."
+    If lastRow >= 4 Then ' Only format if data rows exist
+        ws.Range("E4:E" & lastRow).NumberFormat = "mm/dd/yyyy" ' Document Date (E)
+        ws.Range("F4:F" & lastRow).NumberFormat = "mm/dd/yyyy" ' First Date Pulled (F)
+        ws.Range(DB_COL_LASTCONTACT & "4:" & DB_COL_LASTCONTACT & lastRow).NumberFormat = "mm/dd/yyyy" ' Last Contact Date (M)
+        ' Optional: Add formatting for Amount (D) and Pull Count (I) if needed
+        ws.Range("D4:D" & lastRow).NumberFormat = "$#,##0.00"   ' Amount (D)
+        ws.Range("I4:I" & lastRow).NumberFormat = "0"           ' Pull Count (I)
+    End If
+    ' *** END NUMBER FORMATS ***
+
     If Err.Number <> 0 Then
-        LogUserEditsOperation "WARNING: Error during column/row formatting adjustments: " & Err.Description
+        DebugLog "RefreshDashboard", "WARNING: Error during column/row/number formatting adjustments: " & Err.Description
         Err.Clear
     End If
     On Error GoTo ErrorHandler ' Restore main error handler
-    Application.ScreenUpdating = True ' Turn back on if needed before next step
-    LogUserEditsOperation "Finished final column/row formatting. Time: " & Format(Timer - t_Format, "0.00") & "s"
-
+    Application.ScreenUpdating = True
+    DebugLog "RefreshDashboard", "Step 7: Finished final column/row/number formatting. Time: " & Format(Timer - t_Format, "0.00") & "s"
 
     '--- STEP 8: Apply Conditional Formatting, Protection and Freeze Panes ---
-    LogUserEditsOperation "Applying conditional formatting and protection..."
-    t_Protect = Timer ' Use separate timer if desired
+    DebugLog "RefreshDashboard", "Step 8: Applying conditional formatting and protection..."
+    t_Protect = Timer
     If lastRow >= 4 Then
-        ApplyColorFormatting ws, 4          ' Uses DB_COL_PHASE = "L"
-        ApplyWorkflowLocationFormatting ws, 4 ' Uses DB_COL_WORKFLOW_LOCATION = "J" (Uses Constant)
+        DebugLog "RefreshDashboard", "Step 8: Calling ApplyColorFormatting..."
+        ApplyColorFormatting ws, 4
+        DebugLog "RefreshDashboard", "Step 8: Calling ApplyWorkflowLocationFormatting..."
+        ApplyWorkflowLocationFormatting ws, 4
+    Else
+         DebugLog "RefreshDashboard", "Step 8: Skipping CF (lastRow < 4)."
     End If
-    ProtectUserColumns ws ' Uses DB_COL_PHASE/DB_COL_COMMENTS (L:N) for unlocking
+    DebugLog "RefreshDashboard", "Step 8: Calling ProtectUserColumns..."
+    ProtectUserColumns ws ' Unlocks L:N, Protects sheet
+    DebugLog "RefreshDashboard", "Step 8: Calling FreezeDashboard..."
     FreezeDashboard ws
-    LogUserEditsOperation "Finished formatting/protection. Time: " & Format(Timer - t_Protect, "0.00") & "s"
-    
-    ' >>> ADD THIS LINE <<<
-    modArchival.RefreshAllViews        ' rebuild Active / Archive snapshots
-    ' >>> ADD THIS LINE <<<
+    DebugLog "RefreshDashboard", "Step 8: Finished formatting/protection. Time: " & Format(Timer - t_Protect, "0.00") & "s"
 
-    '--- STEP 9: Final UI Updates (Timestamp, Buttons) ---
-    SetupDashboardUI_EndRefresh ws ' Places buttons in C2, D2
+    '--- Call Archival ---
+    DebugLog "RefreshDashboard", "Calling modArchival.RefreshAllViews..."
+    t_Archival = Timer
+    modArchival.RefreshAllViews ' Creates/Refreshes Active/Archive views
+    DebugLog "RefreshDashboard", "Returned from modArchival.RefreshAllViews. Time: " & Format(Timer - t_Archival, "0.00") & "s"
+
+    '--- STEP 9 (REVISED): Apply Consistent UI Elements to Main Dashboard ---
+    DebugLog "RefreshDashboard", "Step 9 (REVISED): Applying consistent UI elements (Row Heights & Nav Buttons) to main dashboard..."
+    On Error Resume Next ' Local handling for UI elements
+
+    ' Apply Row Heights to match Active/Archive views
+    ws.rows(1).RowHeight = 32 ' Title Banner
+    ws.rows(2).RowHeight = 28 ' Control Panel Row
+    If lastRow >= 4 Then ws.rows("4:" & lastRow).RowHeight = 18 ' Data Rows
+
+    ' Add the same Navigation Buttons as Active/Archive views
+    ' Ensure modArchival.AddNavigationButtons is Public or move it
+    modArchival.AddNavigationButtons ws ' Call the button routine from modArchival
+
+    If Err.Number <> 0 Then
+        DebugLog "RefreshDashboard", "WARNING: Error applying consistent UI elements to main dashboard. Err=" & Err.Number & ": " & Err.Description
+        Err.Clear
+    End If
+    On Error GoTo ErrorHandler ' Restore main error handler for RefreshDashboard
+    DebugLog "RefreshDashboard", "Step 9 (REVISED): Finished applying consistent UI elements."
+    ' --- End Revised Step 9 ---
 
     '--- STEP 10: Create/Update Text-Only Copy ---
-    LogUserEditsOperation "Creating/Updating Text-Only dashboard copy..."
+    DebugLog "RefreshDashboard", "Step 10: CreateOrUpdateTextOnlySheet..."
     t_TextOnly = Timer
-    CreateOrUpdateTextOnlySheet ws ' Uses reviewed version
-    LogUserEditsOperation "Finished Text-Only copy. Time: " & Format(Timer - t_TextOnly, "0.00") & "s"
+    CreateOrUpdateTextOnlySheet ws
+    DebugLog "RefreshDashboard", "Step 10: Finished Text-Only copy. Time: " & Format(Timer - t_TextOnly, "0.00") & "s"
 
     '--- STEP 11: Completion Message & Cleanup ---
     Dim msgText As String
@@ -936,80 +1042,80 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     Else
         msgText = DASHBOARD_SHEET_NAME & " refreshed successfully!" & vbCrLf & vbCrLf & _
                   "Edits made on the dashboard were saved to '" & USEREDITS_SHEET_NAME & "'." & vbCrLf & _
-                  "All data (including User Edits) was merged and displayed." ' Updated message slightly
+                  "All data (including User Edits) was merged and displayed."
     End If
-    Application.DisplayAlerts = True ' Re-enable alerts before showing message box
+    Application.DisplayAlerts = True
     MsgBox msgText, vbInformation, "Dashboard Refresh Complete"
-    Application.DisplayAlerts = False ' Turn back off before potential backup cleanup
+    Application.DisplayAlerts = False
 
-    LogUserEditsOperation "Dashboard refresh completed successfully. Total time: " & Format(Timer - t_Start, "0.00") & "s"
+    DebugLog "RefreshDashboard", "Dashboard refresh process completed successfully."
 
-    ' Clean up old backups if refresh was successful
-    If backupCreated Then CleanupOldBackups ' Deletes backups older than specified days
+    If backupCreated Then
+         DebugLog "RefreshDashboard", "Calling CleanupOldBackups..."
+         CleanupOldBackups
+    End If
 
-Cleanup: ' Label for normal exit and error exit cleanup
-    On Error Resume Next ' Prevent errors during cleanup itself
+Cleanup:
+    DebugLog "RefreshDashboard", "Cleanup Label Reached..."
+    On Error Resume Next
 
-    ' >>> Re-lock Workbook Structure if it was locked initially <<<
     If wbWasLocked Then
-        LogUserEditsOperation "Cleanup: Re-locking workbook structure (if previously locked)..."
+        DebugLog "RefreshDashboard", "Cleanup: Re-locking workbook structure..."
         Call ToggleWorkbookStructure(True)
     End If
-    ' >>> End Re-lock <<<
 
-    ' --- Restore Application Settings ---
-    Application.ScreenUpdating = True
-    Application.Calculation = calcState ' Restore original calculation state
+    DebugLog "RefreshDashboard", "Cleanup: Restoring Application Settings..."
+    Application.ScreenUpdating = screenState
+    Application.Calculation = calcState
     Application.DisplayAlerts = True
-    Application.EnableEvents = eventsState ' Restore original event state LAST
-    ' --- Release Object Variables ---
+    Application.EnableEvents = eventsState
+    DebugLog "RefreshDashboard", "Cleanup: Application Settings Restored (Events=" & eventsState & ")."
+
     Set ws = Nothing
     Set wsEdits = Nothing
     If IsArray(arrFinalData) Then Erase arrFinalData
 
-    ' Activate the original sheet if it was changed
     If Not currentSheet Is Nothing Then
         If ActiveSheet.Name <> currentSheet.Name Then currentSheet.Activate
     End If
     Set currentSheet = Nothing
 
-    LogUserEditsOperation "Cleanup complete."
-    LogUserEditsOperation "=================================================="
-    Exit Sub ' Normal exit
+    DebugLog "RefreshDashboard", "EXIT (Cleanup Complete). Total time: " & Format(Timer - t_Start, "0.00") & "s"
+    Exit Sub
 
-ErrorHandler: ' Master error handler
-    Dim errNum As Long: errNum = Err.Number
-    Dim errDesc As String: errDesc = Err.Description
-    Dim errLine As Long: errLine = Erl ' Get line number where error occurred
+ErrorHandler:
+    errNum = Err.Number
+    errDesc = Err.Description
+    errLine = Erl
 
-    LogUserEditsOperation "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    LogUserEditsOperation "ERROR #" & errNum & " occurred in RefreshDashboard on or near line " & errLine & ":" & vbCrLf & errDesc
-    LogUserEditsOperation "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    DebugLog "RefreshDashboard", "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    DebugLog "RefreshDashboard", "ERROR Handler! Err=" & errNum & ": " & errDesc & " near line " & errLine
+    DebugLog "RefreshDashboard", "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
 
-    ' Attempt to restore from the backup created at the start
     If backupCreated Then
-        LogUserEditsOperation "Attempting to restore UserEdits from pre-refresh backup due to error..."
-        If RestoreUserEditsFromBackup() Then ' Tries to find most recent backup
-            LogUserEditsOperation "UserEdits restore from backup SUCCEEDED."
+        DebugLog "RefreshDashboard", "Attempting to restore UserEdits from pre-refresh backup..."
+        If RestoreUserEditsFromBackup() Then
+            DebugLog "RefreshDashboard", "UserEdits restore from backup SUCCEEDED."
             MsgBox "An error occurred during the refresh." & vbCrLf & vbCrLf & _
                    "Error: " & errDesc & vbCrLf & "(Error Code: " & errNum & ")" & vbCrLf & vbCrLf & _
                    "Your UserEdits sheet has been restored from the backup created before this refresh.", vbCritical, "Dashboard Refresh Error"
         Else
-            LogUserEditsOperation "UserEdits restore from backup FAILED."
+            DebugLog "RefreshDashboard", "UserEdits restore from backup FAILED."
              MsgBox "An error occurred during the refresh." & vbCrLf & vbCrLf & _
                    "Error: " & errDesc & vbCrLf & "(Error Code: " & errNum & ")" & vbCrLf & vbCrLf & _
                    "ATTEMPT TO RESTORE USEREDITS FROM BACKUP FAILED. Please check manually for backup sheets ('" & USEREDITS_SHEET_NAME & "_Backup...').", vbCritical, "Dashboard Refresh Error"
         End If
     Else
+         DebugLog "RefreshDashboard", "No pre-refresh backup was successfully created."
          MsgBox "An error occurred during the refresh." & vbCrLf & vbCrLf & _
                "Error: " & errDesc & vbCrLf & "(Error Code: " & errNum & ")" & vbCrLf & vbCrLf & _
                "No pre-refresh backup was successfully created.", vbCritical, "Dashboard Refresh Error"
     End If
 
-    ' Perform cleanup tasks even after error
     Resume Cleanup
 
 End Sub
+
 
 
 
@@ -1124,7 +1230,7 @@ Private Sub InitializeDashboardLayout(ws As Worksheet)
     ' --- Clear Data Rows & Extra Columns ---
     ws.Range("A4:" & DB_COL_COMMENTS & ws.rows.Count).ClearContents
     On Error Resume Next ' Ignore error deleting columns
-    ws.Range("O:" & ws.Columns.Count).Delete Shift:=xlToLeft
+    ' ws.Range("O:" & ws.Columns.Count).Delete Shift:=xlToLeft
     On Error GoTo 0 ' Restore default error handling for this sub
 
     ' --- Set Headers in Row 3 ---
@@ -1167,9 +1273,6 @@ Private Sub InitializeDashboardLayout(ws As Worksheet)
 
     LogUserEditsOperation "InitializeDashboardLayout: Headers set, Col N data wrap DISABLED."
 End Sub
-
-
-
 
 '------------------------------------------------------------------------------
 ' SetupDashboard - Sets up static Rows 1 (Title) and 2 (Control Panel)
@@ -1249,72 +1352,101 @@ Public Sub SetupDashboard(ws As Worksheet)
 
 '------------------------------------------------------------------------------
 ' ModernButton - Creates styled buttons
-' *** Using compatible version (avoids TextFrame2 errors) ***
+' REVISED: Changed to Function returning Shape, includes visibility/size fixes
 '------------------------------------------------------------------------------
-Public Sub ModernButton(ws As Worksheet, cellRef As String, buttonText As String, macroName As String)
-    On Error Resume Next
-    
-    ' Get the target range (which may be merged)
-    Dim tgt As Range: Set tgt = ws.Range(cellRef)
-    If tgt Is Nothing Then Exit Sub
-    
-    ' Use entire merged range dimensions with padding
-    Dim pad As Double: pad = 2 ' Small inset padding
-    Dim btnLeft As Double: btnLeft = tgt.Left + pad
-    Dim btnTop As Double: btnTop = tgt.Top + pad
-    Dim btnWidth As Double: btnWidth = tgt.Width - (2 * pad)
-    Dim btnHeight As Double: btnHeight = tgt.Height - (2 * pad)
-    
-    ' Add the shape
-    Dim btn As Shape
-    Set btn = ws.Shapes.AddShape(msoShapeRoundedRectangle, btnLeft, btnTop, btnWidth, btnHeight)
-    If btn Is Nothing Then Exit Sub
-    
-    ' Style the button with modern appearance
+Public Function ModernButton(ws As Worksheet, targetCell As Range, ByVal buttonText As String, ByVal macroName As String) As Shape
+'                                                          ^^^^^^                      ^^^^^^
+    Dim btn As Shape ' <<< RENAMED variable to btn for clarity >>>
+    On Error GoTo ModernButtonErrorHandler ' Use local error handler
+
+    ' --- Calculate Position and Size ---
+    Dim pad As Double: pad = 2
+    Dim btnLeft As Double: btnLeft = targetCell.Left + pad ' Use targetCell directly
+    Dim btnTop As Double: btnTop = targetCell.Top + pad   ' Use targetCell directly
+    Const BTN_WIDTH As Double = 80  ' Default width (can be overridden by caller)
+    Const BTN_HEIGHT As Double = 24 ' Fixed height
+
+    ' --- Add the shape ---
+    Set btn = Nothing ' Initialize
+    Set btn = ws.Shapes.AddShape(msoShapeRoundedRectangle, btnLeft, btnTop, BTN_WIDTH, BTN_HEIGHT)
+    If btn Is Nothing Then
+        DebugLog "ModernButton", "ERROR: Failed to add shape for button '" & buttonText & "' on sheet '" & ws.Name & "'."
+        Set ModernButton = Nothing ' Return Nothing on failure
+        Exit Function
+    End If
+
+    ' --- Style the button ---
     With btn
+        ' Size (Caller can override width after function returns)
+         .Width = BTN_WIDTH
+         .Height = BTN_HEIGHT
+         .LockAspectRatio = msoFalse
+
+        ' Force Visible Fill
         .Fill.Visible = msoTrue
         .Fill.Solid
-        .Fill.ForeColor.RGB = RGB(0, 120, 215) ' Windows blue
-        .Line.Visible = msoFalse ' No border
-        .Adjustments(1) = 0.25 ' Rounded corner radius
-        
-        ' Optional: Add gradient for more modern look
-        On Error Resume Next
-        .Fill.OneColorGradient msoGradientHorizontal, 1, 0.25
-        
-        ' Text formatting with more modern approach
-        On Error Resume Next
+        .Fill.ForeColor.RGB = RGB(0, 112, 192)   ' Example blue fill
+        If .Fill.Visible = msoFalse Then .Fill.Visible = msoTrue ' Double-check
+
+        ' Force No Outline
+        .Line.Visible = msoFalse
+
+        ' Rounded Corners
+        .Adjustments(1) = 0.25
+
+        ' Text Formatting (Try TextFrame2 first)
+        On Error Resume Next ' Handle TextFrame2 potentially failing
         With .TextFrame2
             .TextRange.Text = buttonText
-            .TextRange.Font.Fill.ForeColor.RGB = RGB(255, 255, 255) ' White text
+            ' Force Visible Font Fill
+            .TextRange.Font.Fill.Visible = msoTrue
+            .TextRange.Font.Fill.Solid
+            .TextRange.Font.Fill.ForeColor.RGB = vbWhite ' Example white text
+             If .TextRange.Font.Fill.Visible = msoFalse Then .TextRange.Font.Fill.Visible = msoTrue ' Double-check
+            ' Other font settings
             .TextRange.Font.Size = 9
             .HorizontalAnchor = msoAnchorCenter
             .VerticalAnchor = msoAnchorMiddle
             .TextRange.Font.Name = "Segoe UI"
+            .WordWrap = msoFalse
         End With
-        
-        ' If TextFrame2 fails, fall back to TextFrame
+
+        ' Fallback to TextFrame if TextFrame2 failed
         If Err.Number <> 0 Then
             Err.Clear
+            DebugLog "ModernButton", "Note: TextFrame2 failed for button '" & buttonText & "', using TextFrame fallback."
             With .TextFrame
                 .Characters.Text = buttonText
-                .Characters.Font.Color = RGB(255, 255, 255)
+                .Characters.Font.Color = vbWhite ' Fallback font color
                 .Characters.Font.Size = 9
                 .Characters.Font.Name = "Segoe UI"
                 .HorizontalAlignment = xlHAlignCenter
                 .VerticalAlignment = xlVAlignCenter
+                .AutoSize = False
+                .WrapText = False
             End With
         End If
-        
-        ' Placement settings
-        .Placement = xlMoveAndSize ' Move and resize with cells
-        .LockAspectRatio = msoFalse
-        .Name = "btn_" & Replace(buttonText, " ", "_")
+        Err.Clear
+        On Error GoTo ModernButtonErrorHandler ' Restore main handler
+
+        ' Placement & Action
+        .Placement = xlMoveAndSize ' Let caller handle centering if needed
+        .Name = "Temp_" & Replace(buttonText, " ", "_") ' Temporary Name - Caller will rename
         .OnAction = macroName
+
+        ' Ensure it's on top
+         .ZOrder msoBringToFront
     End With
-    
-    On Error GoTo 0
-End Sub
+
+    ' --- Return the created shape ---
+    Set ModernButton = btn ' <<< ADDED THIS LINE >>>
+    Exit Function ' Normal Exit
+
+ModernButtonErrorHandler:
+    DebugLog "ModernButton", "ERROR [" & Err.Number & "] " & Err.Description & " creating button '" & buttonText & "'"
+    Set ModernButton = Nothing ' Return Nothing on error
+End Function
+
 
 
 '------------------------------------------------------------------------------
@@ -1333,59 +1465,6 @@ Private Sub FreezeDashboard(ws As Worksheet)
     If Err.Number <> 0 Then LogUserEditsOperation "FreezeDashboard: Note - Error during freeze panes operation.": Err.Clear
     On Error GoTo 0
 End Sub
-
-'------------------------------------------------------------------------------
-' SetupDashboardUI_EndRefresh - Row-2 timestamp + two buttons (NO MERGES for buttons)
-' Button 1 anchored to C2, Button 2 anchored to D2.
-'------------------------------------------------------------------------------
-'------------------------------------------------------------------------------
-' SetupDashboardUI_EndRefresh - Adds Timestamp and Buttons to Row 2 at end of refresh
-' CORRECTED: No button merges, buttons C2/D2, clears orphan F2 timestamp.
-'------------------------------------------------------------------------------
-Private Sub SetupDashboardUI_EndRefresh(ws As Worksheet)
-    If ws Is Nothing Then Exit Sub
-    LogUserEditsOperation "SetupDashboardUI_EndRefresh: Updating Timestamp and Buttons (No Button Merges)."
-    On Error Resume Next ' Use local error handling
-
-    '--- 0) Kill any old Row-2 shapes ---
-    Dim shp As Shape
-    For Each shp In ws.Shapes
-        ' Check if shape's top-left cell is in row 2
-        If Not Intersect(shp.TopLeftCell, ws.rows(2)) Is Nothing Then
-            shp.Delete
-        End If
-    Next shp
-    If Err.Number <> 0 Then LogUserEditsOperation "SetupDashboardUI_EndRefresh: Warning - Error deleting old buttons.": Err.Clear
-
-    '--- 1) Clean up potentially stale merges and values from previous versions ---
-    ws.Range("C2:D2").UnMerge ' Unmerge potential C2:D2 merge
-    ws.Range("E2:F2").UnMerge ' Unmerge potential E2:F2 merge
-    ws.Range("F2:G2").UnMerge ' Unmerge potential F2:G2 merge
-    ws.Range("F2").ClearContents ' <<< FIX: Clear potential orphan timestamp value in F2
-    If Err.Number <> 0 Then LogUserEditsOperation "SetupDashboardUI_EndRefresh: Warning - Error unmerging/clearing cells.": Err.Clear
-
-    '--- 2) Timestamp (keep G2:I2 merged) ---
-    With ws.Range("G2:I2")
-        .Merge ' Ensure timestamp area is merged
-        .Value = "Last Refreshed: " & Format$(Now(), "mm/dd/yyyy h:nn AM/PM")
-        .HorizontalAlignment = xlCenter
-        .VerticalAlignment = xlCenter
-        .Font.Size = 9
-        .Font.Name = "Segoe UI"
-        .Font.Color = RGB(80, 80, 80)
-        If Err.Number <> 0 Then LogUserEditsOperation "SetupDashboardUI_EndRefresh: Warning - Error setting timestamp.": Err.Clear
-    End With
-
-    '--- 3) Drop the two buttons (using single-cell anchors C2 and D2) ---
-    ModernButton ws, "C2", "Standard Refresh", _
-                 "Button_RefreshDashboard_SaveAndRestoreEdits"
-
-    ModernButton ws, "D2", "Preserve UserEdits", _
-                 "Button_RefreshDashboard_PreserveUserEdits"
-
-    On Error GoTo 0 ' Restore default handler
-End Sub
-
 
 '================================================================================
 '              4. UserEdits SHEET MANAGEMENT (Save, Setup, Backup)
@@ -2004,8 +2083,11 @@ Private Sub ApplyStageFormatting(targetRng As Range)
     Set fc = targetRng.FormatConditions.Add(Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "RI"))
     If Not fc Is Nothing Then fc.Interior.Color = RGB(191, 225, 243)
 
-    Set fc = targetRng.FormatConditions.Add(Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "WW/OM"))
-    If Not fc Is Nothing Then fc.Interior.Color = RGB(155, 124, 185)
+    Set fc = targetRng.FormatConditions.Add( _
+            Type:=xlExpression, _
+            Formula1:="=OR(EXACT(" & firstCellAddress & ",""OM"")," & _
+                       "EXACT(" & firstCellAddress & ",""WW/OM""))")
+    If Not fc Is Nothing Then fc.Interior.Color = RGB(255, 204, 229)   'light pink
 
     Set fc = targetRng.FormatConditions.Add(Type:=xlExpression, Formula1:=Replace(formulaBase, "{PHASE}", "Converted"))
     If Not fc Is Nothing Then With fc: .Interior.Color = RGB(120, 235, 120): .Font.Bold = True: End With
@@ -2248,7 +2330,7 @@ Public Sub ResetDashboardLayout()
     ws.Range("C2:D2").Merge
     ws.Range("E2:F2").Merge
     ' Rebuild buttons
-    SetupDashboardUI_EndRefresh ws
+    modArchival.AddNavigationButtons ws
     MsgBox "Dashboard layout has been reset", vbInformation
 End Sub
 '============================================================
