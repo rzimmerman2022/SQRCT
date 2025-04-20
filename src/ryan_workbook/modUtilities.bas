@@ -4,15 +4,16 @@ Option Explicit
 ' Module: modUtilities
 ' Purpose: Contains general helper functions and subroutines used across the
 '          SQRCT application, particularly for data validation, list handling,
-'          and shared UI updates.
+'          count calculations, and shared UI updates.
 '==================================================================================
 
 '----------------------------------------------------------------------------------
 Public Function GetPhaseFromPrefix(txt As String) As String
 '----------------------------------------------------------------------------------
 ' Purpose:      Finds the unique, full phase name from the master 'PHASE_LIST'.
-'               Matches based on case-insensitive prefix or exact match.
-' Arguments:    txt (String): The text typed by the user.
+'               Matches based on case-insensitive prefix or exact match. Handles
+'               ambiguity by returning an empty string.
+' Arguments:    txt (String): The text typed by the user into a phase cell.
 ' Returns:      String: The full, correctly-cased phase name from PHASE_LIST if a
 '                       unique match is found; returns an empty string ("") if no
 '                       match is found or if the prefix is ambiguous (matches more
@@ -38,6 +39,7 @@ Public Function GetPhaseFromPrefix(txt As String) As String
     On Error GoTo ErrorHandler_GPFP ' Restore proper error handling
     If rngList Is Nothing Then
         MsgBox "Error: Named range 'PHASE_LIST' not found. Auto-complete cannot function.", vbCritical
+        GetPhaseFromPrefix = "" ' Return empty string if list not found
         Exit Function
     End If
 
@@ -46,14 +48,14 @@ Public Function GetPhaseFromPrefix(txt As String) As String
     matchCount = 0    ' Counts how many items in the list match the prefix
 
     For Each cell In rngList.Cells
-         If Len(Trim$(CStr(cell.Value))) > 0 Then ' Ensure cell in list not empty
-            candidate = LCase$(Trim$(CStr(cell.Value))) ' Normalize list value for comparison
+         If Len(Trim$(CStr(cell.value))) > 0 Then ' Ensure cell in list not empty
+            candidate = LCase$(Trim$(CStr(cell.value))) ' Normalize list value for comparison
 
             ' Check if input is an exact match (case-insensitive) OR a prefix match
             If candidate = normalizedInput Or Left$(candidate, Len(normalizedInput)) = normalizedInput Then
                 If matchCount = 0 Then
                     ' First match found
-                    hit = CStr(cell.Value) ' Store the correctly cased value from the list
+                    hit = CStr(cell.value) ' Store the correctly cased value from the list
                     matchCount = 1
                     ' If it was an exact match, we don't need to check further in the list.
                     If candidate = normalizedInput Then Exit For
@@ -68,8 +70,7 @@ Public Function GetPhaseFromPrefix(txt As String) As String
                     End If
                     ' If we get here, it means the input EXACTLY matched the first hit,
                     ' but is also a prefix of this second hit (e.g., input "A", list has "A", "Apple").
-                    ' The exact match wins, so we keep the original 'hit' and continue checking
-                    ' just in case there's *another* exact match later (highly unlikely).
+                    ' The exact match wins, so we keep the original 'hit' and continue checking.
                 End If
             End If
          End If
@@ -88,15 +89,17 @@ End Function
 '----------------------------------------------------------------------------------
 Public Sub AddPhaseValidation()
 '----------------------------------------------------------------------------------
-' Purpose:      Applies Data Validation rules (List type) to the Engagement Phase
-'               columns on the main Dashboard and UserEdits sheets. This creates
-'               the dropdown arrow and enforces selection from the master list.
+' Purpose:      Applies Data Validation rules (List type based on PHASE_LIST)
+'               to the Engagement Phase columns on the main Dashboard (L) and
+'               UserEdits (B) sheets. Creates the dropdown arrow and sets the
+'               Stop alert style (VBA SheetChange handler provides user messages).
 '               Should be run ONCE during setup or if validation needs resetting.
 ' Arguments:    None.
 ' Returns:      None.
 ' Assumptions:  - Named range "PHASE_LIST" exists and is correctly defined.
 '               - Sheet names defined in constants (DASH_SHEET, EDITS_SHEET) are correct.
-'               - Column letters/numbers defined in constants are correct.
+'               - Column letters defined in constants (DASH_PHASE_COL, EDITS_PHASE_COL) are correct.
+'               - Module_Dashboard.DebugLog exists and is accessible.
 ' Called By:    Manually run by developer/admin during setup.
 ' Location:     modUtilities Module
 '----------------------------------------------------------------------------------
@@ -104,14 +107,13 @@ Public Sub AddPhaseValidation()
     Dim validationFormula As String
     Const DASH_SHEET As String = "SQRCT Dashboard" ' Use actual name
     Const EDITS_SHEET As String = "UserEdits"      ' Use actual name
-    Const DASH_PHASE_COL As String = "L" ' Use letter for Range object
-    Const EDITS_PHASE_COL As String = "B" ' Use letter for Range object
-    ' Note: Start rows are handled within Workbook_SheetChange for event firing,
-    '       but applying validation to the whole column is generally robust.
+    Const DASH_PHASE_COL As String = "L"
+    Const EDITS_PHASE_COL As String = "B"
+    ' Note: Start rows are not needed here as validation is applied to whole column
 
     validationFormula = "=PHASE_LIST" ' The named range containing all valid phases
 
-    On Error Resume Next ' Ignore errors if sheets don't exist
+    On Error Resume Next ' Ignore errors if sheets don't exist yet
     Set wsDash = ThisWorkbook.Worksheets(DASH_SHEET)
     Set wsEdits = ThisWorkbook.Worksheets(EDITS_SHEET)
     On Error GoTo 0 ' Restore default error handling
@@ -171,17 +173,18 @@ Public Sub AddPhaseValidation()
 End Sub
 
 '----------------------------------------------------------------------------------
-Sub ApplyPhaseValidationToListColumn(ws As Worksheet, colLetter As String, startDataRow As Long)
+Public Sub ApplyPhaseValidationToListColumn(ws As Worksheet, colLetter As String, startDataRow As Long)
 '----------------------------------------------------------------------------------
 ' Purpose:      Re-applies the List Data Validation rule (using PHASE_LIST) to a
-'               specific column on a worksheet after data has been refreshed.
+'               specific column on a worksheet AFTER data has been refreshed.
 '               Ensures the dropdown arrow reappears on overwritten cells.
 ' Arguments:    ws (Worksheet): The target worksheet.
 '               colLetter (String): The letter of the column to apply validation to (e.g., "L").
 '               startDataRow (Long): The first row containing data in that column.
 ' Returns:      None.
 ' Assumptions:  - Named range "PHASE_LIST" exists and is correctly defined.
-'               - Column A is a reliable indicator of the last data row.
+'               - Column A is a reliable indicator of the last data row on the sheet 'ws'.
+'               - Module_Dashboard.DebugLog exists and is accessible.
 ' Called By:    RefreshDashboard, ApplyViewFormatting
 ' Location:     modUtilities Module
 '----------------------------------------------------------------------------------
@@ -206,11 +209,11 @@ Sub ApplyPhaseValidationToListColumn(ws As Worksheet, colLetter As String, start
 
     ' --- Apply Validation ---
     Module_Dashboard.DebugLog "ApplyPhaseValidationToListColumn", "Applying List validation to " & ws.Name & "!" & validationRange.Address(False, False)
-    On Error Resume Next ' Handle errors applying validation
+    On Error Resume Next ' Handle errors applying validation (e.g., sheet protected)
     validationRange.Validation.Delete ' Clear any existing rule first
     validationRange.Validation.Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
                                    Operator:=xlBetween, Formula1:=validationFormula
-    If Err.Number = 0 Then ' Only set these if Add succeeded
+    If Err.Number = 0 Then ' Only set these properties if Add succeeded
          validationRange.Validation.IgnoreBlank = True
          validationRange.Validation.InCellDropdown = True
          validationRange.Validation.ErrorTitle = "Invalid Phase"
@@ -222,37 +225,48 @@ Sub ApplyPhaseValidationToListColumn(ws As Worksheet, colLetter As String, start
     On Error GoTo 0 ' Restore default error handling
 
     Set validationRange = Nothing
-
 End Sub
 
 '----------------------------------------------------------------------------------
-Public Function GetDataRowCount(ws As Worksheet) As Long
+Public Function GetDataRowCount(ws As Object) As Long ' Changed Worksheet to Object
 '----------------------------------------------------------------------------------
 ' Purpose:      Calculates the number of actual data rows on a given worksheet.
-' Arguments:    ws (Worksheet): The worksheet object to check.
-' Returns:      Long: The count of data rows found. Returns 0 if sheet is invalid,
-'               no data exists, or last row is within header rows.
+' Arguments:    ws (Object): The worksheet object to check (passed as Object
+'                          to avoid compile error with Public Function signature).
+' Returns:      Long: The count of data rows found. Returns 0 if object is invalid,
+'               not a worksheet, no data exists, or last row is within header rows.
 ' Assumptions:  - Data starts on Row 4 on Dashboard/Active/Archive sheets.
 '               - Headers occupy Rows 1 through 3 on these sheets.
 '               - Column A is a reliable indicator of the last used data row.
+'               - Module_Dashboard.DebugLog exists and is accessible.
 ' Called By:    UpdateAllViewCounts
 ' Location:     modUtilities Module
 '----------------------------------------------------------------------------------
     Dim lastRow As Long
-    Const HEADER_ROWS As Long = 3 ' Number of rows before data starts
+    Dim actualWS As Worksheet ' Variable to hold worksheet reference
 
     ' --- Input Validation ---
     If ws Is Nothing Then
-        DebugLog "GetDataRowCount", "ERROR: Worksheet object provided was Nothing."
-        GetDataRowCount = 0 ' Return 0 if no valid sheet provided
+        Module_Dashboard.DebugLog "GetDataRowCount", "ERROR: Object provided was Nothing."
+        GetDataRowCount = 0
         Exit Function
     End If
 
+    ' --- Type Check ---
+    If Not TypeOf ws Is Worksheet Then
+        Module_Dashboard.DebugLog "GetDataRowCount", "ERROR: Object provided is not a Worksheet. Type: " & TypeName(ws)
+        GetDataRowCount = 0
+        Exit Function
+    End If
+    ' If TypeOf check passes, it's safe to treat ws as a Worksheet
+    Set actualWS = ws
+
     ' --- Find Last Row ---
+    Const HEADER_ROWS As Long = 3 ' Number of rows before data starts
     On Error Resume Next ' Handle potential errors if sheet is empty or protected
-    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    lastRow = actualWS.Cells(actualWS.rows.Count, "A").End(xlUp).Row
     If Err.Number <> 0 Then
-        DebugLog "GetDataRowCount", "ERROR finding last row on '" & ws.Name & "'. Err: " & Err.Description
+        Module_Dashboard.DebugLog "GetDataRowCount", "ERROR finding last row on '" & actualWS.Name & "'. Err: " & Err.Description
         lastRow = 0 ' Reset lastRow if error occurred
         Err.Clear
     End If
@@ -268,93 +282,99 @@ Public Function GetDataRowCount(ws As Worksheet) As Long
     End If
 
     ' --- Logging ---
-    DebugLog "GetDataRowCount", "Sheet '" & ws.Name & "' has " & GetDataRowCount & " data rows (LastRow in Col A = " & lastRow & ")."
+    Module_Dashboard.DebugLog "GetDataRowCount", "Sheet '" & actualWS.Name & "' has " & GetDataRowCount & " data rows (LastRow in Col A = " & lastRow & ")."
 
+    Set actualWS = Nothing ' Clean up object variable
 End Function
 
-'----------------------------------------------------------------------------------
-Public Sub UpdateAllViewCounts()
-'----------------------------------------------------------------------------------
-' Purpose:      Calculates the data row counts for the main Dashboard, Active,
-'               and Archive views and updates the corresponding labels in Row 2
-'               (Cells J2, K2, L2) on all three sheets consistently.
-' Arguments:    None.
-' Returns:      None.
-' Assumptions:  - Public Constants for sheet names (DASHBOARD_SHEET_NAME in Module_Dashboard,
-'                 SH_ACTIVE, SH_ARCHIVE in modArchival) are defined and accessible.
-'               - Public Constant PW_WORKBOOK in Module_Dashboard is defined for protection.
-'               - GetDataRowCount function exists and is accessible (expected in this module).
-'               - Target cells J2, K2, L2 exist on all three sheets.
-' Called By:    RefreshDashboard (typically near the end)
-' Location:     modUtilities Module
-'----------------------------------------------------------------------------------
-    Dim wsDash As Worksheet, wsAct As Worksheet, wsArc As Worksheet
-    Dim cntDash As Long, cntAct As Long, cntArc As Long
-    Dim ws As Worksheet ' Loop variable
-    Const TOP_ROW As Long = 2 ' Row where count labels are placed
-    Const DASH_COUNT_COL As String = "J" ' Column for Dashboard count
-    Const ACT_COUNT_COL As String = "K"  ' Column for Active count
-    Const ARC_COUNT_COL As String = "L"  ' Column for Archive count
 
-    On Error GoTo CountErrorHandler
+Public Sub UpdateAllViewCounts(ws As Worksheet)
+    ' Purpose: Reads the stored record counts from modArchival's properties
+    '          and updates the display cells (J2:L2) on the provided worksheet.
+    ' Called By: Module_Dashboard.RefreshDashboard, modArchival.RefreshAndActivate
 
-    DebugLog "UpdateAllViewCounts", "Starting count update process..."
+    If ws Is Nothing Then
+        Module_Dashboard.DebugLog "UpdateAllViewCounts", "ERROR: Worksheet object is Nothing. Cannot update counts."
+        Exit Sub
+    End If
 
-    ' --- Get Sheet Objects ---
-    On Error Resume Next ' Temporarily ignore errors if a sheet doesn't exist
-    Set wsDash = ThisWorkbook.Worksheets(Module_Dashboard.DASHBOARD_SHEET_NAME)
-    Set wsAct = ThisWorkbook.Worksheets(modArchival.SH_ACTIVE)   ' Requires SH_ACTIVE to be Public Const in modArchival
-    Set wsArc = ThisWorkbook.Worksheets(modArchival.SH_ARCHIVE)  ' Requires SH_ARCHIVE to be Public Const in modArchival
-    On Error GoTo CountErrorHandler ' Restore proper error handling
+    Dim totalCount As Long
+    Dim activeCount As Long
+    Dim archiveCount As Long
+    Dim strTotal As String, strActive As String, strArchive As String
 
-    ' --- Calculate Counts using Helper Function ---
-    If Not wsDash Is Nothing Then cntDash = GetDataRowCount(wsDash) Else cntDash = -1
-    If Not wsAct Is Nothing Then cntAct = GetDataRowCount(wsAct) Else cntAct = -1
-    If Not wsArc Is Nothing Then cntArc = GetDataRowCount(wsArc) Else cntArc = -1
-    DebugLog "UpdateAllViewCounts", "Counts Calculated: Dashboard=" & cntDash & ", Active=" & cntAct & ", Archive=" & cntArc
+    On Error Resume Next ' Handle errors reading properties (e.g., if modArchival had compile error)
+    totalCount = modArchival.TotalRecords
+    activeCount = modArchival.ActiveRecords
+    archiveCount = modArchival.ArchiveRecords
+    If Err.Number <> 0 Then
+        Module_Dashboard.DebugLog "UpdateAllViewCounts", "ERROR reading count properties from modArchival. Err: " & Err.Description
+        strTotal = "Total: ERR"
+        strActive = "Active: ERR"
+        strArchive = "Archive: ERR"
+        Err.Clear
+    Else
+        strTotal = "Total: " & totalCount
+        strActive = "Active: " & activeCount
+        strArchive = "Archive: " & archiveCount
+    End If
+    On Error GoTo 0 ' Restore default error handling
 
-    ' --- Update Labels on All Three Sheets ---
-    DebugLog "UpdateAllViewCounts", "Updating Row 2 count labels on relevant sheets..."
-    Application.EnableEvents = False ' Prevent triggering sheet change events
+    Module_Dashboard.DebugLog "UpdateAllViewCounts", "Updating counts on sheet '" & ws.Name & "'. Total=" & totalCount & ", Active=" & activeCount & ", Archive=" & archiveCount
 
-    For Each ws In Array(wsDash, wsAct, wsArc) ' Loop through the sheet objects
-        If Not ws Is Nothing Then ' Proceed only if the sheet object exists
-            On Error Resume Next ' Handle errors during unprotect/write/protect for each sheet
+    ' --- Write Counts to Row 2 ---
+    On Error Resume Next ' Handle errors writing to sheet (e.g., protection)
+    ' Clear previous counts first
+    ws.Range("J2:L2").ClearContents
 
-            ws.Unprotect Password:=Module_Dashboard.PW_WORKBOOK ' Assumes PW_WORKBOOK is Public Const
-            If Err.Number <> 0 Then DebugLog "UpdateAllViewCounts", "Warning: Could not unprotect '" & ws.Name & "' (Err#" & Err.Number & ")": Err.Clear
+    ' Populate based on the sheet type (Show all on Dashboard, relevant on others)
+    Select Case ws.Name
+        Case Module_Dashboard.DASHBOARD_SHEET_NAME ' Main Dashboard
+            ws.Range("J2").value = strTotal
+            ws.Range("K2").value = strActive
+            ws.Range("L2").value = strArchive
+        Case modArchival.SH_ACTIVE ' Active View
+            ws.Range("J2").value = strTotal  ' Show total for context
+            ws.Range("K2").value = strActive
+            ' ws.Range("L2").Value = "" ' Leave Archive blank
+        Case modArchival.SH_ARCHIVE ' Archive View
+            ws.Range("J2").value = strTotal  ' Show total for context
+            ' ws.Range("K2").Value = "" ' Leave Active blank
+            ws.Range("L2").value = strArchive
+        Case Else
+            ' Apply to other sheets if needed, or do nothing
+            Module_Dashboard.DebugLog "UpdateAllViewCounts", "Sheet '" & ws.Name & "' not recognized for specific count display. Writing all counts."
+             ws.Range("J2").value = strTotal
+             ws.Range("K2").value = strActive
+             ws.Range("L2").value = strArchive
+    End Select
 
-            ' Write the counts
-            ws.Range(DASH_COUNT_COL & TOP_ROW).Value = "Dashboard: " & IIf(cntDash = -1, "ERR", cntDash)
-            ws.Range(ACT_COUNT_COL & TOP_ROW).Value = "Active: " & IIf(cntAct = -1, "ERR", cntAct)
-            ws.Range(ARC_COUNT_COL & TOP_ROW).Value = "Archive: " & IIf(cntArc = -1, "ERR", cntArc)
+    ' --- Apply Formatting to Count Cells ---
+    With ws.Range("J2:L2")
+        .HorizontalAlignment = xlCenter
+        .VerticalAlignment = xlCenter
+        .Font.Bold = False ' Make counts normal weight
+        .Font.Size = 9     ' Smaller font for counts
+        .Font.Italic = True
+        ' Optional: Set specific font color, e.g., .Font.Color = RGB(100, 100, 100)
+    End With
 
-            ' Format the count labels
-            With ws.Range(DASH_COUNT_COL & TOP_ROW & ":" & ARC_COUNT_COL & TOP_ROW) ' e.g., J2:L2
-                .Font.Size = 9
-                .Font.Italic = True
-                .HorizontalAlignment = xlLeft
-                .VerticalAlignment = xlCenter
-                .NumberFormat = "@" ' Treat as Text
-            End With
+    If Err.Number <> 0 Then
+        Module_Dashboard.DebugLog "UpdateAllViewCounts", "ERROR writing or formatting counts on sheet '" & ws.Name & "'. Err: " & Err.Description
+        Err.Clear
+    End If
+    On Error GoTo 0 ' Restore default error handling
 
-            ' Re-protect the sheet
-            ws.Protect Password:=Module_Dashboard.PW_WORKBOOK, DrawingObjects:=True, Contents:=True, Scenarios:=True
-            If Err.Number <> 0 Then DebugLog "UpdateAllViewCounts", "Warning: Could not re-protect '" & ws.Name & "' (Err#" & Err.Number & ")": Err.Clear
-
-            On Error GoTo CountErrorHandler ' Restore main error handler after handling sheet-specific errors
-        Else
-             DebugLog "UpdateAllViewCounts", "Skipping count update for a sheet object that was Nothing."
-        End If
-    Next ws
-
-    Application.EnableEvents = True
-    DebugLog "UpdateAllViewCounts", "Finished count update process."
-    Exit Sub ' Normal exit
-
-CountErrorHandler:
-    DebugLog "UpdateAllViewCounts", "ERROR updating counts: #" & Err.Number & " - " & Err.Description & " (Line: " & Erl & ")"
-    Application.EnableEvents = True ' Ensure events are always re-enabled on error exit
+    Module_Dashboard.DebugLog "UpdateAllViewCounts", "Finished updating counts display for sheet '" & ws.Name & "'."
 
 End Sub
 
+' --- Dummy DebugLog Sub (if not already present in modUtilities) ---
+' Add this simple version if your modUtilities doesn't have logging setup,
+' otherwise remove this and ensure your existing DebugLog handles two string arguments.
+' Assumes Module_Dashboard and its DEBUG_LOGGING constant are accessible.
+Private Sub DebugLog(procedureName As String, message As String)
+    If Module_Dashboard.DEBUG_LOGGING Then ' Assumes DEBUG_LOGGING constant exists in Module_Dashboard
+        Debug.Print Format$(Now(), "hh:nn:ss") & " [" & procedureName & "] " & message
+    End If
+End Sub

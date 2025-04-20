@@ -810,7 +810,6 @@ End Sub
 ' RefreshDashboard — Master routine orchestrating the entire refresh
 ' REVISED: Includes Number Formatting Fix, Corrected Step 9 for UI Consistency
 '          FIXED: Call to ApplyPhaseValidationToListColumn now references modUtilities
-'          ADDED: Call to modUtilities.UpdateAllViewCounts before completion message.
 '------------------------------------------------------------------------------
 Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
 
@@ -1057,13 +1056,7 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     CreateOrUpdateTextOnlySheet ws
     DebugLog "RefreshDashboard", "Step 10: Finished Text-Only copy. Time: " & Format(Timer - t_TextOnly, "0.00") & "s"
 
-    '--- STEP 11: Update Counts Display & Completion Message ---
-    ' *** NEW: Call the central count update routine ***
-    DebugLog "RefreshDashboard", "Step 11a: Updating counts display..."
-    If Not ws Is Nothing Then Call modUtilities.UpdateAllViewCounts(ws) ' Update counts on main dashboard
-
-    ' --- Completion Message ---
-    DebugLog "RefreshDashboard", "Step 11b: Displaying completion message..."
+    '--- STEP 11: Completion Message & Cleanup ---
     Dim msgText As String
     If PreserveUserEdits Then
         msgText = DASHBOARD_SHEET_NAME & " refreshed successfully!" & vbCrLf & vbCrLf & _
@@ -1074,9 +1067,9 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
                   "Edits made on the dashboard were saved to '" & USEREDITS_SHEET_NAME & "'." & vbCrLf & _
                   "All data (including User Edits) was merged and displayed."
     End If
-    Application.DisplayAlerts = True ' Re-enable alerts BEFORE showing message box
+    Application.DisplayAlerts = True
     MsgBox msgText, vbInformation, "Dashboard Refresh Complete"
-    Application.DisplayAlerts = False ' Disable again before final cleanup steps
+    Application.DisplayAlerts = False
 
     DebugLog "RefreshDashboard", "Dashboard refresh process completed successfully."
 
@@ -1097,7 +1090,7 @@ Cleanup:
     DebugLog "RefreshDashboard", "Cleanup: Restoring Application Settings..."
     Application.ScreenUpdating = screenState
     Application.Calculation = calcState
-    Application.DisplayAlerts = True ' Restore alerts fully at the end
+    Application.DisplayAlerts = True
     Application.EnableEvents = eventsState
     DebugLog "RefreshDashboard", "Cleanup: Application Settings Restored (Events=" & eventsState & ")."
 
@@ -1145,6 +1138,7 @@ ErrorHandler:
     Resume Cleanup
 
 End Sub
+
 
 
 
@@ -1394,10 +1388,10 @@ Public Sub SetupDashboard(ws As Worksheet)
      On Error GoTo 0
      Application.ScreenUpdating = True
  End Sub
+
 '------------------------------------------------------------------------------
 ' ModernButton - Creates styled buttons
 ' REVISED: Function returning Shape, accepts Range & Width, includes ByVal & visibility fixes
-' FIXED:   Correctly handles buttonWidth = 0 to mean autofit to target cell width.
 '------------------------------------------------------------------------------
 Public Function ModernButton(ws As Worksheet, targetCell As Range, ByVal buttonText As String, ByVal macroName As String, ByVal buttonWidth As Double) As Shape
     Dim btn As Shape
@@ -1405,28 +1399,15 @@ Public Function ModernButton(ws As Worksheet, targetCell As Range, ByVal buttonT
 
     ' --- Calculate Position and Size ---
     Dim pad As Double: pad = 2 ' Padding inside target cell
-    ' *** NEW: Handle buttonWidth = 0 case ***
-    If buttonWidth = 0 Then
-        If Not targetCell Is Nothing Then
-             ' Calculate width based on cell width minus padding
-            buttonWidth = targetCell.Width - (2 * pad)
-            If buttonWidth < 10 Then buttonWidth = 10 ' Ensure a minimum width
-        Else
-            buttonWidth = 100 ' Default width if targetCell is invalid
-            Module_Dashboard.DebugLog "ModernButton", "WARNING: Target cell invalid for autofit, using default width 100 for '" & buttonText & "'."
-        End If
-    End If
-    ' *** END NEW ***
-
     Dim btnLeft As Double: btnLeft = targetCell.Left + pad ' Position relative to target cell
-    Dim btnTop As Double: btnTop = targetCell.Top + pad    ' Position relative to target cell
+    Dim btnTop As Double: btnTop = targetCell.Top + pad   ' Position relative to target cell
     Const BTN_HEIGHT As Double = 24 ' Fixed height for consistency
 
-    ' --- Add the shape using calculated or passed-in width ---
+    ' --- Add the shape using PASSED IN width ---
     Set btn = Nothing
-    Set btn = ws.Shapes.AddShape(msoShapeRoundedRectangle, btnLeft, btnTop, buttonWidth, BTN_HEIGHT) ' Use calculated/passed buttonWidth
+    Set btn = ws.Shapes.AddShape(msoShapeRoundedRectangle, btnLeft, btnTop, buttonWidth, BTN_HEIGHT) ' Use passed buttonWidth
     If btn Is Nothing Then
-        Module_Dashboard.DebugLog "ModernButton", "ERROR: Failed to add shape for '" & buttonText & "'."
+        DebugLog "ModernButton", "ERROR: Failed to add shape for '" & buttonText & "'."
         Set ModernButton = Nothing
         Exit Function
     End If
@@ -1439,55 +1420,55 @@ Public Function ModernButton(ws As Worksheet, targetCell As Range, ByVal buttonT
          .LockAspectRatio = msoFalse
 
         ' Force Visible Fill
-         .Fill.Visible = msoTrue
-         .Fill.Solid
-         .Fill.ForeColor.RGB = RGB(0, 112, 192)   ' Example blue fill
-         If .Fill.Visible = msoFalse Then .Fill.Visible = msoTrue ' Double-check
+        .Fill.Visible = msoTrue
+        .Fill.Solid
+        .Fill.ForeColor.RGB = RGB(0, 112, 192)   ' Example blue fill
+        If .Fill.Visible = msoFalse Then .Fill.Visible = msoTrue ' Double-check
 
         ' Force No Outline
-         .Line.Visible = msoFalse
+        .Line.Visible = msoFalse
 
         ' Rounded Corners
-         .Adjustments(1) = 0.25
+        .Adjustments(1) = 0.25
 
         ' Text Formatting
-         On Error Resume Next
-         With .TextFrame2 ' Try modern text frame
-             .TextRange.Text = buttonText
-             .TextRange.Font.Fill.Visible = msoTrue ' Force text visible
-             .TextRange.Font.Fill.Solid
-             .TextRange.Font.Fill.ForeColor.RGB = vbWhite ' Example white text
-              If .TextRange.Font.Fill.Visible = msoFalse Then .TextRange.Font.Fill.Visible = msoTrue ' Double-check
-             .TextRange.Font.Size = 9
-             .HorizontalAnchor = msoAnchorCenter
-             .VerticalAnchor = msoAnchorMiddle
-             .TextRange.Font.Name = "Segoe UI"
-             .WordWrap = msoFalse
-         End With
-         If Err.Number <> 0 Then ' Fallback to older text frame
-             Err.Clear
-             Module_Dashboard.DebugLog "ModernButton", "Note: TextFrame2 failed for '" & buttonText & "', using TextFrame fallback."
-             With .TextFrame
-                 .Characters.Text = buttonText
-                 .Characters.Font.Color = vbWhite ' Fallback color
-                 .Characters.Font.Size = 9
-                 .Characters.Font.Name = "Segoe UI"
-                 .HorizontalAlignment = xlHAlignCenter
-                 .VerticalAlignment = xlVAlignCenter
-                 .AutoSize = False
-                 .WrapText = False
-             End With
-         End If
-         Err.Clear
-         On Error GoTo ModernButtonErrorHandler ' Restore error handler for rest of With block
+        On Error Resume Next
+        With .TextFrame2 ' Try modern text frame
+            .TextRange.Text = buttonText
+            .TextRange.Font.Fill.Visible = msoTrue ' Force text visible
+            .TextRange.Font.Fill.Solid
+            .TextRange.Font.Fill.ForeColor.RGB = vbWhite ' Example white text
+             If .TextRange.Font.Fill.Visible = msoFalse Then .TextRange.Font.Fill.Visible = msoTrue ' Double-check
+            .TextRange.Font.Size = 9
+            .HorizontalAnchor = msoAnchorCenter
+            .VerticalAnchor = msoAnchorMiddle
+            .TextRange.Font.Name = "Segoe UI"
+            .WordWrap = msoFalse
+        End With
+        If Err.Number <> 0 Then ' Fallback to older text frame
+            Err.Clear
+            DebugLog "ModernButton", "Note: TextFrame2 failed for '" & buttonText & "', using TextFrame fallback."
+            With .TextFrame
+                .Characters.Text = buttonText
+                .Characters.Font.Color = vbWhite ' Fallback color
+                .Characters.Font.Size = 9
+                .Characters.Font.Name = "Segoe UI"
+                .HorizontalAlignment = xlHAlignCenter
+                .VerticalAlignment = xlVAlignCenter
+                .AutoSize = False
+                .WrapText = False
+            End With
+        End If
+        Err.Clear
+        On Error GoTo ModernButtonErrorHandler ' Restore error handler for rest of With block
 
         ' Placement & Action & Temp Name
-         .Placement = xlMoveAndSize
-         .Name = "Temp_" & Replace(buttonText, " ", "_") ' Temporary - AddNavigationButtons will rename
-         .OnAction = macroName
+        .Placement = xlMoveAndSize
+        .Name = "Temp_" & Replace(buttonText, " ", "_") ' Temporary - AddNavigationButtons will rename
+        .OnAction = macroName
 
         ' Ensure it's on top
-          .ZOrder msoBringToFront
+         .ZOrder msoBringToFront
     End With
 
     ' --- Return the created shape ---
@@ -1495,51 +1476,28 @@ Public Function ModernButton(ws As Worksheet, targetCell As Range, ByVal buttonT
     Exit Function ' Normal Exit
 
 ModernButtonErrorHandler:
-    Module_Dashboard.DebugLog "ModernButton", "ERROR [" & Err.Number & "] " & Err.Description & " creating button '" & buttonText & "'"
+    DebugLog "ModernButton", "ERROR [" & Err.Number & "] " & Err.Description & " creating button '" & buttonText & "'"
     Set ModernButton = Nothing ' Return Nothing on error
 End Function
 
 
+
 '------------------------------------------------------------------------------
 ' FreezeDashboard - Freezes rows 1-3
-' *** CORRECTED: Added check for ActiveWindow object ***
+' *** Uses user's provided version ***
 '------------------------------------------------------------------------------
 Private Sub FreezeDashboard(ws As Worksheet)
-    If ws Is Nothing Then Exit Sub ' Safety check
-
-    Module_Dashboard.DebugLog "FreezeDashboard", "Attempting to freeze panes at row 4 for sheet '" & ws.Name & "'."
-
-    ' --- Activate the sheet first ---
-    On Error Resume Next ' Handle error activating
-    ws.Activate
-    If Err.Number <> 0 Then
-        Module_Dashboard.DebugLog "FreezeDashboard", "WARNING - Could not activate sheet '" & ws.Name & "' before freezing. Freeze skipped. Err: " & Err.Description
-        Err.Clear
-        Exit Sub ' Cannot freeze if sheet not active
-    End If
-    On Error GoTo 0 ' Restore default error handling
-
-    ' --- Check if ActiveWindow exists before manipulating FreezePanes ---
-    If Not ActiveWindow Is Nothing Then
-        Module_Dashboard.DebugLog "FreezeDashboard", "ActiveWindow found. Applying FreezePanes..." ' Log added
-        On Error Resume Next ' Ignore error if already frozen/unfrozen or other issues
-        ActiveWindow.FreezePanes = False ' Unfreeze first
-        ws.Range("A4").Select           ' Select cell below freeze row
-        ActiveWindow.FreezePanes = True   ' Freeze above selected cell
-        ws.Range("A1").Select ' Select A1 after freezing
-
-        If Err.Number <> 0 Then
-            Module_Dashboard.DebugLog "FreezeDashboard", "Note - Error during freeze panes operation on ActiveWindow. Err: " & Err.Description
-            Err.Clear
-        Else
-            Module_Dashboard.DebugLog "FreezeDashboard", "Freeze panes applied successfully."
-        End If
-        On Error GoTo 0 ' Restore default error handling
-    Else
-        Module_Dashboard.DebugLog "FreezeDashboard", "WARNING - ActiveWindow object not available. Skipping freeze panes."
-    End If
+    If ws Is Nothing Then Exit Sub ' Added safety check
+    LogUserEditsOperation "FreezeDashboard: Freezing panes at row 4." ' Added Log
+    ws.Activate ' Ensure sheet is active
+    On Error Resume Next ' Ignore error if already frozen/unfrozen
+    ActiveWindow.FreezePanes = False ' Unfreeze first
+    ws.Range("A4").Select          ' Select cell below freeze row
+    ActiveWindow.FreezePanes = True  ' Freeze above selected cell
+    ws.Range("A1").Select ' Select A1 after freezing
+    If Err.Number <> 0 Then LogUserEditsOperation "FreezeDashboard: Note - Error during freeze panes operation.": Err.Clear
+    On Error GoTo 0
 End Sub
-
 
 '================================================================================
 '              4. UserEdits SHEET MANAGEMENT (Save, Setup, Backup)
@@ -2399,6 +2357,16 @@ Public Sub CreateSQRCTDashboard()
     RefreshDashboard PreserveUserEdits:=False
 End Sub
 
+'------------------------------------------------------------------------------
+' Module_Identity Placeholder (Ensure this module exists in your project)
+'------------------------------------------------------------------------------
+' If you don't have Module_Identity, create it and add this code:
+'
+' Option Explicit
+' Public Const WORKBOOK_IDENTITY As String = "UNIQUE_ID" ' e.g., "RZ", "AF", "MASTER"
+' Public Function GetWorkbookIdentity() As String
+'    GetWorkbookIdentity = WORKBOOK_IDENTITY
+' End Function
 '------------------------------------------------------------------------------
 Public Sub ResetDashboardLayout()
     Dim ws As Worksheet
