@@ -1,0 +1,20 @@
+# Ignore everything by default
+*
+
+# Allow only specific folders and files
+!readme.txt
+!docs/
+!src/ryan_workbook/
+!.gitignore
+!.copilotignore
+
+# If you want to exclude certain files even within allowed folders
+src/ryan_workbook/possible good mod_dashboard.vb
+
+# Exclude other workbooks
+src/ally_workbook/
+src/master_workbook/
+src/sync_tool/
+
+# Exclude power query files to reduce token usage
+src/power_query/

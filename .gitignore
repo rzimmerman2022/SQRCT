@@ -1,0 +1,117 @@
+I've enhanced your .gitignore file to better align with the evolved nature of your SQRCT project, particularly considering the performance dashboard components you're developing.
+# =========================================================
+# SQRCT Excel/VBA/PQ Project .gitignore
+# Optimized for code-only repository management
+# Last updated: April 2025
+# =========================================================
+
+# === Excel Temporary & Operational Files ===
+# Temporary files created when Excel workbooks are open
+~$*.xls*
+*.xlk
+*.bak
+*.tmp
+
+# Production workbooks (store extracted code only, not workbooks)
+# Pattern-based approach for better maintainability
+*SQRCT_Main*.xls*
+*SQRCT_SyncTool*.xls*
+*TOOL_SQRCT*.xls*
+*Working Version*.xls*
+*Master Version*.xls*
+
+# === Data Files ===
+# Exclude all data files from the repository
+data/
+*.csv
+*.json
+*.xml
+*.parquet
+
+# === Performance Dashboard Artifacts ===
+# Exclude generated charts and report exports
+reports/
+exports/
+*.pdf
+*.png
+*.jpg
+*.svg
+
+# === Environment Configuration ===
+.env
+.env.*
+config/*.local.json
+
+# === Editor & IDE Files ===
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/sqrct.code-snippets
+*.code-workspace
+
+# === Operating System Files ===
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+
+# === Development Tools ===
+# Python (for any auxiliary scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+ENV/
+.env/
+.venv/
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# VBA Extract/Import tools temp files
+_VBA_PROJECT/
+_extracted/
+_backup/
+
+# === Documentation Artifacts ===
+# Exclude generated documentation
+docs/_build/
+docs/_site/
+
+# === Include Essential Documentation ===
+# Ensure documentation is tracked
+!docs/*.md
+!*.md
+!LICENSE
+
+# === Performance Testing ===
+# Exclude performance test data and results
+perf_tests/results/
+perf_tests/data/
