@@ -11,6 +11,10 @@
 '           Naming Convention, ReDim Preserve fix, detailed logging).
 '           Refined section structure for better organization.
 '           FIXED: Removed invalid 'Me' keyword usage when calling Property Let within the standard module.
+' REVISED: 04/20/2025 - Refactored ApplyViewFormatting to call new
+'                      modFormatting.ExactlyCloneDashboardFormatting function
+'                      to ensure consistent Row 1/2 appearance. Removed
+'                      premature sheet protection from AddNavigationButtons.
 '=====================================================================
 Option Explicit
 
@@ -609,9 +613,9 @@ Private Sub CopyFilteredRows(wsSrc As Worksheet, wsTgt As Worksheet, _
         ' Get phase from the correct numeric index, trim, convert to string defensively
         phaseValue = Trim$(CStr(arrData(r, phaseColIndex)))
 
-        ' Sample the first 10 rows for debugging filter logic
-        If r <= 10 Then _
-            Module_Dashboard.DebugLog "FilterSample", "r=" & r & ", phase='" & phaseValue & "', IsPhaseArchived=" & IsPhaseArchived(phaseValue) & ", IsPhaseActive=" & IsPhaseActive(phaseValue)
+        ' Sample the first 10 rows for debugging filter logic (Commented out 04/20/2025 - Too verbose)
+        ' If r <= 10 Then _
+        '     Module_Dashboard.DebugLog "FilterSample", "r=" & r & ", phase='" & phaseValue & "', IsPhaseArchived=" & IsPhaseArchived(phaseValue) & ", IsPhaseActive=" & IsPhaseActive(phaseValue)
 
         ' Check if the row's archived status matches the filter requirement
         ' If keepArchived=True, we want rows where IsPhaseArchived is True
@@ -965,19 +969,6 @@ Private Sub ApplyViewFormatting(ws As Worksheet, viewTag As String) ' viewTag is
     If Err.Number <> 0 Then Module_Dashboard.DebugLog "ApplyViewFormatting", "Warning: Error unprotecting sheet. Err=" & Err.Number: Err.Clear
     On Error GoTo ApplyViewFormatting_Error ' Restore handler
 
-    ' --- Force banner + control row heights AND BACKGROUND to match main dashboard ---
-    Module_Dashboard.DebugLog "ApplyViewFormatting", "Applying consistent row styles (Height & Color)..."
-    On Error Resume Next ' Ignore errors if setting fails (e.g., sheet protected somehow)
-
-    ' Set Row 1 Height (Title Bar)
-    ws.rows(1).RowHeight = 32
-
-    ' Set Row 2 Height and Background Color (Control Row)
-    With ws.rows(2)
-        .RowHeight = 28
-        .Interior.Color = RGB(245, 245, 245) ' Set light grey background for entire row 2
-    End With
-
     ' --- Optional: Set consistent data row height ---
     ' Calculate lastRow here to apply height to data rows
     lastRow = ws.Cells(ws.rows.Count, "A").End(xlUp).Row ' Calculate last data row based on Col A
@@ -1051,8 +1042,8 @@ Private Sub ApplyViewFormatting(ws As Worksheet, viewTag As String) ' viewTag is
     ' --- Protection (Make read-only) ---
     Module_Dashboard.DebugLog "ApplyViewFormatting", "Locking all cells..."
     On Error Resume Next ' Handle error if sheet is protected
-    ws.Cells.Locked = True ' Lock all cells on the view sheets
-    If Err.Number <> 0 Then Module_Dashboard.DebugLog "ApplyViewFormatting", "Warning: Error locking cells. Err=" & Err.Number: Err.Clear
+    ws.Cells.Locked = True ' Lock all cells on the view sheets first
+    If Err.Number <> 0 Then Module_Dashboard.DebugLog "ApplyViewFormatting", "Warning: Error locking all cells. Err=" & Err.Number: Err.Clear
     On Error GoTo ApplyViewFormatting_Error ' Restore handler
 
     ' --- Apply Freeze Panes ---
@@ -1067,7 +1058,14 @@ Private Sub ApplyViewFormatting(ws As Worksheet, viewTag As String) ' viewTag is
     On Error GoTo ApplyViewFormatting_Error ' Restore handler
     Module_Dashboard.DebugLog "ApplyViewFormatting", "Applied freeze panes."
 
-     ' --- Final Protection ---
+    ' --- Apply EXACT Dashboard Formatting Clone (Row 1 Title, Row 2 Controls, Buttons, Counts) ---
+    ' Calls the central cloning function from modFormatting to ensure pixel-perfect replication.
+    Module_Dashboard.DebugLog "ApplyViewFormatting", "Calling modFormatting.ExactlyCloneDashboardFormatting..."
+    modFormatting.ExactlyCloneDashboardFormatting ws, viewTag ' Use the exact cloning function
+    Module_Dashboard.DebugLog "ApplyViewFormatting", "Returned from ExactlyCloneDashboardFormatting."
+
+     ' --- Final Protection (Specific to Active/Archive Views) ---
+     ' This protection is applied AFTER all formatting and UI elements are set.
      Module_Dashboard.DebugLog "ApplyViewFormatting", "Applying final sheet protection..."
      On Error Resume Next ' Handle protection errors
      ws.Protect Password:=Module_Dashboard.PW_WORKBOOK, DrawingObjects:=True, Contents:=True, Scenarios:=True, _
@@ -1078,12 +1076,6 @@ Private Sub ApplyViewFormatting(ws As Worksheet, viewTag As String) ' viewTag is
      If Err.Number <> 0 Then Module_Dashboard.DebugLog "ApplyViewFormatting", "Warning: Error applying sheet protection. Err=" & Err.Number: Err.Clear
      On Error GoTo ApplyViewFormatting_Error ' Restore handler
      Module_Dashboard.DebugLog "ApplyViewFormatting", "Applied sheet protection (Read-Only)."
-
-    ' --- Add Navigation Buttons ---
-    ' Note: This sub NO LONGER writes counts. Counts are read from properties and written elsewhere.
-    Module_Dashboard.DebugLog "ApplyViewFormatting", "Calling AddNavigationButtons..."
-    AddNavigationButtons ws ' Call helper to add buttons to Row 2
-    Module_Dashboard.DebugLog "ApplyViewFormatting", "Returned from AddNavigationButtons."
 
 ApplyViewFormatting_Cleanup:
     Module_Dashboard.DebugLog "ApplyViewFormatting", "Cleanup Label Reached."
@@ -1205,19 +1197,11 @@ Public Sub AddNavigationButtons(ws As Worksheet) ' Made Public as it's called by
     If Err.Number <> 0 Then Module_Dashboard.DebugLog "AddNavigationButtons", "Warning: Error setting timestamp text. Err=" & Err.Number: Err.Clear
     On Error GoTo AddNav_Error ' Restore handler
 
-    '----- re-protect --------------------------------------------------
-    ' Only re-protect if the sheet should be protected (e.g., Active/Archive views)
-    ' The main dashboard might not need re-protection here if called separately.
-    If ws.Name = SH_ACTIVE Or ws.Name = SH_ARCHIVE Then
-        Module_Dashboard.DebugLog "AddNavigationButtons", "Re-protecting sheet '" & ws.Name & "'..."
-        On Error Resume Next
-        ws.Protect Password:=Module_Dashboard.PW_WORKBOOK, DrawingObjects:=True, Contents:=True, Scenarios:=True ' Protect sheet
-        If Err.Number <> 0 Then Module_Dashboard.DebugLog "AddNavigationButtons", "Warning: Error re-protecting. Err=" & Err.Number: Err.Clear
-        On Error GoTo AddNav_Error ' Restore handler
-        Module_Dashboard.DebugLog "AddNavigationButtons", "Sheet re-protected."
-    Else
-        Module_Dashboard.DebugLog "AddNavigationButtons", "Skipping re-protection for sheet '" & ws.Name & "'."
-    End If
+    '----- re-protect REMOVED (04/20/2025) -----------------------------
+    ' Protection is now handled by the calling function (ApplyViewFormatting)
+    ' AFTER all formatting and UI elements (including counts) are complete.
+    ' This prevents errors where cells were locked before counts could be written.
+    Module_Dashboard.DebugLog "AddNavigationButtons", "Skipping re-protection within this sub."
 
 
     Module_Dashboard.DebugLog "AddNavigationButtons", "EXIT (Normal - Buttons/Timestamp Only). Time: " & Format(Timer - t1, "0.00") & "s"
@@ -1230,5 +1214,3 @@ AddNav_Error: ' Error Handler for this subroutine
     Set shp = Nothing: Set target = Nothing ' Clean up objects
     ' Consider whether to attempt re-protection on error if sheet was unprotected
 End Sub
-
-

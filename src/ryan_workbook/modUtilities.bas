@@ -1,11 +1,14 @@
 Option Explicit
 
-'==================================================================================
-' Module: modUtilities
-' Purpose: Contains general helper functions and subroutines used across the
-'          SQRCT application, particularly for data validation, list handling,
-'          count calculations, and shared UI updates.
-'==================================================================================
+'=====================================================================
+' Module :  modUtilities
+' Purpose: Contains general utility functions used across the project,
+'          including validation helpers and UI updaters.
+' REVISED: 04/20/2025 - Added ApplyStandardControlRow (later removed and replaced
+'                      by modFormatting.ExactlyCloneDashboardFormatting).
+'                      Added logging to UpdateAllViewCounts to debug count display.
+'                      Removed IndentLevel setting from UpdateAllViewCounts.
+'=====================================================================
 
 '----------------------------------------------------------------------------------
 Public Function GetPhaseFromPrefix(txt As String) As String
@@ -49,30 +52,30 @@ Public Function GetPhaseFromPrefix(txt As String) As String
 
     For Each cell In rngList.Cells
          If Len(Trim$(CStr(cell.value))) > 0 Then ' Ensure cell in list not empty
-            candidate = LCase$(Trim$(CStr(cell.value))) ' Normalize list value for comparison
+             candidate = LCase$(Trim$(CStr(cell.value))) ' Normalize list value for comparison
 
-            ' Check if input is an exact match (case-insensitive) OR a prefix match
-            If candidate = normalizedInput Or Left$(candidate, Len(normalizedInput)) = normalizedInput Then
-                If matchCount = 0 Then
-                    ' First match found
-                    hit = CStr(cell.value) ' Store the correctly cased value from the list
-                    matchCount = 1
-                    ' If it was an exact match, we don't need to check further in the list.
-                    If candidate = normalizedInput Then Exit For
-                Else
-                    ' This is the second (or more) prefix match found
-                    matchCount = matchCount + 1
-                    ' If we find a second match, AND the input wasn't an EXACT match
-                    ' to the *first* hit we stored, then the prefix is ambiguous.
-                    If LCase$(hit) <> normalizedInput Then
-                         GetPhaseFromPrefix = "" ' Return empty string for ambiguous prefix
-                         Exit Function
-                    End If
-                    ' If we get here, it means the input EXACTLY matched the first hit,
-                    ' but is also a prefix of this second hit (e.g., input "A", list has "A", "Apple").
-                    ' The exact match wins, so we keep the original 'hit' and continue checking.
-                End If
-            End If
+             ' Check if input is an exact match (case-insensitive) OR a prefix match
+             If candidate = normalizedInput Or Left$(candidate, Len(normalizedInput)) = normalizedInput Then
+                 If matchCount = 0 Then
+                     ' First match found
+                     hit = CStr(cell.value) ' Store the correctly cased value from the list
+                     matchCount = 1
+                     ' If it was an exact match, we don't need to check further in the list.
+                     If candidate = normalizedInput Then Exit For
+                 Else
+                     ' This is the second (or more) prefix match found
+                     matchCount = matchCount + 1
+                     ' If we find a second match, AND the input wasn't an EXACT match
+                     ' to the *first* hit we stored, then the prefix is ambiguous.
+                     If LCase$(hit) <> normalizedInput Then
+                          GetPhaseFromPrefix = "" ' Return empty string for ambiguous prefix
+                          Exit Function
+                     End If
+                     ' If we get here, it means the input EXACTLY matched the first hit,
+                     ' but is also a prefix of this second hit (e.g., input "A", list has "A", "Apple").
+                     ' The exact match wins, so we keep the original 'hit' and continue checking.
+                 End If
+             End If
          End If
     Next cell
 
@@ -106,12 +109,12 @@ Public Sub AddPhaseValidation()
     Dim wsDash As Worksheet, wsEdits As Worksheet
     Dim validationFormula As String
     Const DASH_SHEET As String = "SQRCT Dashboard" ' Use actual name
-    Const EDITS_SHEET As String = "UserEdits"      ' Use actual name
+    Const EDITS_SHEET As String = "UserEdits"     ' Use actual name
     Const DASH_PHASE_COL As String = "L"
     Const EDITS_PHASE_COL As String = "B"
     ' Note: Start rows are not needed here as validation is applied to whole column
 
-    validationFormula = "=PHASE_LIST" ' The named range containing all valid phases
+    validationFormula = "=" & Module_Dashboard.PHASE_LIST_NAMED_RANGE ' Use constant from Module_Dashboard
 
     On Error Resume Next ' Ignore errors if sheets don't exist yet
     Set wsDash = ThisWorkbook.Worksheets(DASH_SHEET)
@@ -128,7 +131,7 @@ Public Sub AddPhaseValidation()
             .Validation.Delete ' Clear existing validation first
             ' Add List validation, using Stop style (VBA handler provides custom message/logic)
             .Validation.Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
-                            Operator:=xlBetween, Formula1:=validationFormula
+                              Operator:=xlBetween, Formula1:=validationFormula
             If Err.Number = 0 Then ' Only set properties if Add succeeded
                 .Validation.IgnoreBlank = True ' Allow blank cells
                 .Validation.InCellDropdown = True ' Show dropdown arrow
@@ -147,18 +150,18 @@ Public Sub AddPhaseValidation()
     If Not wsEdits Is Nothing Then
          Module_Dashboard.DebugLog "AddPhaseValidation", "Applying validation to " & EDITS_SHEET & " Column " & EDITS_PHASE_COL
          With wsEdits.Columns(EDITS_PHASE_COL) ' Apply to whole column
-            .Validation.Delete
-            .Validation.Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
-                            Operator:=xlBetween, Formula1:=validationFormula
-             If Err.Number = 0 Then
-                .Validation.IgnoreBlank = True
-                .Validation.InCellDropdown = True
-                .Validation.ErrorTitle = "Invalid Phase"
-                .Validation.ErrorMessage = "Please select a phase from the list or type a recognized prefix."
-             Else
-                Module_Dashboard.DebugLog "AddPhaseValidation", "ERROR applying validation to UserEdits: " & Err.Description: Err.Clear
-             End If
-        End With
+             .Validation.Delete
+             .Validation.Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
+                               Operator:=xlBetween, Formula1:=validationFormula
+              If Err.Number = 0 Then
+                 .Validation.IgnoreBlank = True
+                 .Validation.InCellDropdown = True
+                 .Validation.ErrorTitle = "Invalid Phase"
+                 .Validation.ErrorMessage = "Please select a phase from the list or type a recognized prefix."
+              Else
+                  Module_Dashboard.DebugLog "AddPhaseValidation", "ERROR applying validation to UserEdits: " & Err.Description: Err.Clear
+              End If
+         End With
     Else
          Module_Dashboard.DebugLog "AddPhaseValidation", "WARNING: Sheet not found - " & EDITS_SHEET
     End If
@@ -195,7 +198,7 @@ Public Sub ApplyPhaseValidationToListColumn(ws As Worksheet, colLetter As String
     Dim lastRow As Long
     Dim validationRange As Range
     Dim validationFormula As String
-    validationFormula = "=PHASE_LIST" ' Assumes named range exists
+    validationFormula = "=" & Module_Dashboard.PHASE_LIST_NAMED_RANGE ' Use constant from Module_Dashboard
 
     ' --- Determine Range ---
     On Error Resume Next ' Handle errors getting last row
@@ -232,9 +235,9 @@ Public Function GetDataRowCount(ws As Object) As Long ' Changed Worksheet to Obj
 '----------------------------------------------------------------------------------
 ' Purpose:      Calculates the number of actual data rows on a given worksheet.
 ' Arguments:    ws (Object): The worksheet object to check (passed as Object
-'                          to avoid compile error with Public Function signature).
+'                           to avoid compile error with Public Function signature).
 ' Returns:      Long: The count of data rows found. Returns 0 if object is invalid,
-'               not a worksheet, no data exists, or last row is within header rows.
+'                 not a worksheet, no data exists, or last row is within header rows.
 ' Assumptions:  - Data starts on Row 4 on Dashboard/Active/Archive sheets.
 '               - Headers occupy Rows 1 through 3 on these sheets.
 '               - Column A is a reliable indicator of the last used data row.
@@ -288,10 +291,14 @@ Public Function GetDataRowCount(ws As Object) As Long ' Changed Worksheet to Obj
 End Function
 
 
+'---------------------------------------------------------------------
+' UpdateAllViewCounts - Reads counts from modArchival properties and
+'                       writes them to the specified sheet's Row 2.
+'---------------------------------------------------------------------
 Public Sub UpdateAllViewCounts(ws As Worksheet)
-    ' Purpose: Reads the stored record counts from modArchival's properties
-    '          and updates the display cells (J2:L2) on the provided worksheet.
-    ' Called By: Module_Dashboard.RefreshDashboard, modArchival.RefreshAndActivate
+' Purpose: Reads the stored record counts from modArchival's properties
+'          and updates the display cells (J2:L2) on the provided worksheet.
+' Called By: modFormatting.ExactlyCloneDashboardFormatting ' Updated 04/20/2025
 
     If ws Is Nothing Then
         Module_Dashboard.DebugLog "UpdateAllViewCounts", "ERROR: Worksheet object is Nothing. Cannot update counts."
@@ -320,7 +327,8 @@ Public Sub UpdateAllViewCounts(ws As Worksheet)
     End If
     On Error GoTo 0 ' Restore default error handling
 
-    Module_Dashboard.DebugLog "UpdateAllViewCounts", "Updating counts on sheet '" & ws.Name & "'. Total=" & totalCount & ", Active=" & activeCount & ", Archive=" & archiveCount
+    ' *** ADDED (04/20/2025): Log the values READ from properties BEFORE writing ***
+    Module_Dashboard.DebugLog "UpdateAllViewCounts", "Values READ for sheet '" & ws.Name & "': Total=" & totalCount & ", Active=" & activeCount & ", Archive=" & archiveCount
 
     ' --- Write Counts to Row 2 ---
     On Error Resume Next ' Handle errors writing to sheet (e.g., protection)
@@ -356,6 +364,7 @@ Public Sub UpdateAllViewCounts(ws As Worksheet)
         .Font.Bold = False ' Make counts normal weight
         .Font.Size = 9     ' Smaller font for counts
         .Font.Italic = True
+        ' .IndentLevel = 1 ' REMOVED (04/20/2025) - Caused error 1004 on protected sheets if unlock failed.
         ' Optional: Set specific font color, e.g., .Font.Color = RGB(100, 100, 100)
     End With
 
@@ -369,10 +378,16 @@ Public Sub UpdateAllViewCounts(ws As Worksheet)
 
 End Sub
 
+
+' --- ApplyStandardControlRow REMOVED (04/20/2025) ---
+' Centralized formatting logic moved to modFormatting.ExactlyCloneDashboardFormatting.
+
+
 ' --- Dummy DebugLog Sub (if not already present in modUtilities) ---
 ' Add this simple version if your modUtilities doesn't have logging setup,
 ' otherwise remove this and ensure your existing DebugLog handles two string arguments.
 ' Assumes Module_Dashboard and its DEBUG_LOGGING constant are accessible.
+' *** REMOVED DUPLICATE DEFINITION ***
 Private Sub DebugLog(procedureName As String, message As String)
     If Module_Dashboard.DEBUG_LOGGING Then ' Assumes DEBUG_LOGGING constant exists in Module_Dashboard
         Debug.Print Format$(Now(), "hh:nn:ss") & " [" & procedureName & "] " & message

@@ -11,8 +11,8 @@ Public Const PW_WORKBOOK As String = ""    ' <--- ADD PASSWORD HERE IF ANY (Keep
 ' --- Sheet Names ---
 ' Make DASHBOARD_SHEET_NAME Public for modArchival navigation
 Public Const DASHBOARD_SHEET_NAME As String = "SQRCT Dashboard"
-Public Const USEREDITS_SHEET_NAME As String = "UserEdits" ' Keep Private? (Review if modUtilities needs it Public)
-Private Const USEREDITSLOG_SHEET_NAME As String = "UserEditsLog" ' Keep Private
+Public Const USEREDITS_SHEET_NAME As String = "UserEdits"
+Private Const DEBUG_LOG_SHEET_NAME As String = "DebugLogSheet" ' Renamed from UserEditsLog (04/20/2025)
 Private Const TEXT_ONLY_SHEET_NAME As String = "SQRCT Dashboard (Text-Only)" ' Keep Private
 
 ' --- Data Source Names ---
@@ -48,7 +48,10 @@ Public Const DB_COL_COMMENTS As String = "N" ' PUBLIC needed for modArchival ran
 Public Const DEBUG_LOGGING As Boolean = True ' Master switch for DebugLog output
 Public Const PHASE_LIST_NAMED_RANGE As String = "PHASE_LIST" ' Name of the range holding valid phases
 
-
+' REVISED: 04/20/2025 - Refactored RefreshDashboard to use new
+'                      modFormatting.ExactlyCloneDashboardFormatting function
+'                      for consistent Row 1/2 UI before protection. Removed
+'                      redundant formatting/button/count calls.
 '===============================================================================
 '                         0. CORE HELPER ROUTINES
 '===============================================================================
@@ -464,11 +467,12 @@ End Function
 '------------------------------------------------------------------------------
 ' LogUserEditsOperation – Timestamped entry to hidden log sheet
 ' *** Using robust version ***
+' REVISED: 04/20/2025 - Changed sheet name constant to DEBUG_LOG_SHEET_NAME and updated error msg.
 '------------------------------------------------------------------------------
 Public Sub LogUserEditsOperation(msg As String)
     Dim wsLog As Worksheet, r As Long
     On Error Resume Next ' Prevent error if sheet exists but is protected differently
-    Set wsLog = ThisWorkbook.Sheets(USEREDITSLOG_SHEET_NAME)
+    Set wsLog = ThisWorkbook.Sheets(DEBUG_LOG_SHEET_NAME) ' Use new constant
     On Error GoTo 0 ' Restore error handling
 
     If wsLog Is Nothing Then
@@ -476,7 +480,7 @@ Public Sub LogUserEditsOperation(msg As String)
         Set wsLog = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
         If wsLog Is Nothing Then Exit Sub ' Failed to add sheet
         On Error GoTo 0
-        wsLog.Name = USEREDITSLOG_SHEET_NAME
+        wsLog.Name = DEBUG_LOG_SHEET_NAME ' Use new constant
         wsLog.Range("A1:C1").value = Array("Timestamp", "Workbook", "Operation")
         wsLog.Range("A1:C1").Font.Bold = True
         wsLog.Visible = xlSheetHidden ' Hide it by default
@@ -488,9 +492,9 @@ Public Sub LogUserEditsOperation(msg As String)
     wsLog.Cells(r, "A").value = Format$(Now, "yyyy-mm-dd hh:nn:ss")
     wsLog.Cells(r, "B").value = Module_Identity.GetWorkbookIdentity() ' Use Identity Module
     wsLog.Cells(r, "C").value = msg
-    If Err.Number <> 0 Then Debug.Print "Error writing to UserEditsLog: " & Err.Description: Err.Clear
+    If Err.Number <> 0 Then Debug.Print "Error writing to " & DEBUG_LOG_SHEET_NAME & ": " & Err.Description: Err.Clear ' Use new constant in error msg
     On Error GoTo 0
-End Sub
+ End Sub
 
     '------------------------------------------------------------------------------
     ' LoadUserEditsToDictionary (MODIFIED)
@@ -1007,6 +1011,11 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     Application.ScreenUpdating = True ' Turn back on before CF/Protect which might be slow
     DebugLog "RefreshDashboard", "Step 7: Finished final column/row/number formatting and validation. Time: " & Format(Timer - t_Format, "0.00") & "s"
 
+    '--- Apply EXACT Dashboard Formatting Clone (BEFORE Protection/Freeze) ---
+    Module_Dashboard.DebugLog "RefreshDashboard", "Calling modFormatting.ExactlyCloneDashboardFormatting for Dashboard sheet..."
+    modFormatting.ExactlyCloneDashboardFormatting ws, "Dashboard" ' Apply exact format to Dashboard itself
+    Module_Dashboard.DebugLog "RefreshDashboard", "Returned from ExactlyCloneDashboardFormatting for Dashboard."
+
     '--- STEP 8: Apply Conditional Formatting, Protection and Freeze Panes ---
     DebugLog "RefreshDashboard", "Step 8: Applying conditional formatting and protection..."
     t_Protect = Timer
@@ -1024,32 +1033,15 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     FreezeDashboard ws
     DebugLog "RefreshDashboard", "Step 8: Finished formatting/protection. Time: " & Format(Timer - t_Protect, "0.00") & "s"
 
-    '--- Call Archival ---
+    '--- Call Archival (which will use ExactlyCloneDashboardFormatting for Active/Archive) ---
+    ' This call refreshes the Active/Archive sheets. Inside its ApplyViewFormatting,
+    ' it now calls modFormatting.ExactlyCloneDashboardFormatting to ensure consistency.
     DebugLog "RefreshDashboard", "Calling modArchival.RefreshAllViews..."
     t_Archival = Timer
     modArchival.RefreshAllViews ' Creates/Refreshes Active/Archive views
     DebugLog "RefreshDashboard", "Returned from modArchival.RefreshAllViews. Time: " & Format(Timer - t_Archival, "0.00") & "s"
 
-    '--- STEP 9 (REVISED): Apply Consistent UI Elements to Main Dashboard ---
-    DebugLog "RefreshDashboard", "Step 9 (REVISED): Applying consistent UI elements (Row Heights & Nav Buttons) to main dashboard..."
-    On Error Resume Next ' Local handling for UI elements
-
-    ' Apply Row Heights to match Active/Archive views
-    ws.rows(1).RowHeight = 32 ' Title Banner
-    ws.rows(2).RowHeight = 28 ' Control Panel Row
-    If lastRow >= 4 Then ws.rows("4:" & lastRow).RowHeight = 18 ' Data Rows
-
-    ' Add the same Navigation Buttons as Active/Archive views
-    ' Ensure modArchival.AddNavigationButtons is Public or move it
-    modArchival.AddNavigationButtons ws ' Call the button routine from modArchival
-
-    If Err.Number <> 0 Then
-        DebugLog "RefreshDashboard", "WARNING: Error applying consistent UI elements to main dashboard. Err=" & Err.Number & ": " & Err.Description
-        Err.Clear
-    End If
-    On Error GoTo ErrorHandler ' Restore main error handler for RefreshDashboard
-    DebugLog "RefreshDashboard", "Step 9 (REVISED): Finished applying consistent UI elements."
-    ' --- End Revised Step 9 ---
+    '--- STEP 9: (REMOVED - Now handled by ApplyStandardControlRow called before Step 8) ---
 
     '--- STEP 10: Create/Update Text-Only Copy ---
     DebugLog "RefreshDashboard", "Step 10: CreateOrUpdateTextOnlySheet..."
@@ -1057,13 +1049,9 @@ Public Sub RefreshDashboard(Optional PreserveUserEdits As Boolean = False)
     CreateOrUpdateTextOnlySheet ws
     DebugLog "RefreshDashboard", "Step 10: Finished Text-Only copy. Time: " & Format(Timer - t_TextOnly, "0.00") & "s"
 
-    '--- STEP 11: Update Counts Display & Completion Message ---
-    ' *** NEW: Call the central count update routine ***
-    DebugLog "RefreshDashboard", "Step 11a: Updating counts display..."
-    If Not ws Is Nothing Then Call modUtilities.UpdateAllViewCounts(ws) ' Update counts on main dashboard
-
-    ' --- Completion Message ---
-    DebugLog "RefreshDashboard", "Step 11b: Displaying completion message..."
+    '--- STEP 11: Completion Message ---
+    ' (Count update now handled by ApplyStandardControlRow called before Step 8)
+    DebugLog "RefreshDashboard", "Step 11: Displaying completion message..."
     Dim msgText As String
     If PreserveUserEdits Then
         msgText = DASHBOARD_SHEET_NAME & " refreshed successfully!" & vbCrLf & vbCrLf & _
@@ -1822,7 +1810,7 @@ Public Sub SetupUserEditsSheet()
 ErrorHandler_SetupUserEdits:
     LogUserEditsOperation "SetupUserEditsSheet: CRITICAL ERROR [" & Err.Number & "] " & Err.Description & " (Line: " & Erl & ")"
     MsgBox "An critical error occurred during UserEdits Sheet Setup: " & Err.Description & vbCrLf & _
-           "Please check the '" & USEREDITSLOG_SHEET_NAME & "' sheet for details.", vbCritical, "UserEdits Setup Error"
+           "Please check the '" & DEBUG_LOG_SHEET_NAME & "' sheet for details.", vbCritical, "UserEdits Setup Error"
 End Sub
 
 '------------------------------------------------------------------------------
@@ -2439,7 +2427,5 @@ ErrHandler:
     LogUserEditsOperation "ToggleWorkbookStructure ERR " & Err.Number & ": " & Err.Description
     ToggleWorkbookStructure = False ' Return False on error
 End Function
-
-
 
 
