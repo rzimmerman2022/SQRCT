@@ -1,0 +1,55 @@
+Update Summary - April 21, 2025
+
+Project: SQRCT Dashboard
+
+Version Target: Post-Compile Fixes for v4.0.0 WIP Integration (Project Stabilization)
+
+Context:
+Following the integration of multiple new modules (modArchival, modFormatting, modPerformanceDashboard, modUtilities) and significant refactoring, numerous compile-time errors arose related to inter-module calls, function/sub definitions, and scope. This update focuses on resolving these errors to achieve a stable, compilable state. Additionally, performance adjustments were made to logging within high-frequency loops.
+
+Changes Verified/Implemented in this Update:
+
+1.  Resolved Compile Errors:
+    * Fixed "Method or data member not found" errors for calls to `BuildModernPerfDashboard` by ensuring the subroutine is `Public` in `modPerformanceDashboard` and called correctly from `Module_Dashboard`.
+    * Fixed "Method or data member not found" errors for calls to `ApplyPhaseValidationToListColumn` by updating calls in `Module_Dashboard::RefreshDashboard` and `modArchival::ApplyViewFormatting` to correctly qualify the call (`modUtilities.ApplyPhaseValidationToListColumn`).
+    * Fixed "Sub or Function not defined" errors within `modArchival` for `RefreshActiveView` by ensuring the subroutine definition was present and correct.
+    * Resolved various other minor syntax errors, scope issues (Public/Private), and undefined label errors identified during compilation across modules.
+
+2.  Performance Dashboard (`modPerformanceDashboard`):
+    * Verified the full integration of the `modPerformanceDashboard` module.
+    * Confirmed presence and corrected implementation of main subs (`BuildModernPerfDashboard`, `BuildPerformanceDataModel_FromDashboard`).
+    * Included necessary helper functions within the module: `ClearPerfDashboardContents`, `ApplyModernDashboardTheme`, chart creation subs (`CreateExecutiveSnapshot`, `CreatePipelineDistributionChart`, etc.), card creation (`CreateMetricCard`, `CreatePipelineTargetCard`), `AddDashboardControls`, `AddPerfRefreshButton`, `UpdateStageCycleTimes`.
+    * Ensured `BuildPerformanceDataModel_FromDashboard` uses standard `If...Else...End If` logic.
+    * Confirmed integration with history update mechanism via call to `Module_Dashboard.UpdateHistoricalMetrics`.
+    * Included `EnsureConfigSheet_Local` as a fallback for configuration sheet setup.
+
+3.  Logging & Performance:
+    * Modified high-frequency data processing loops in `modPerformanceDashboard::BuildPerformanceDataModel_FromDashboard` and `modArchival::CopyFilteredRows` to use `Debug.Print` (outputting to Immediate Window) instead of the sheet-writing `Module_Dashboard.DebugLog`. This prevents Excel from freezing during intensive logging.
+    * Conditionalized the `Debug.Print` statements using `#If DEBUG_MODE Then ... #End If`.
+    * Maintained `Module_Dashboard.DebugLog` for major function entry/exit points, errors, and non-loop status updates.
+    * Added `#Const DEBUG_MODE = True` to `modPerformanceDashboard`.
+
+4.  Helper Functions (`Module_Dashboard`):
+    * Added and verified helper functions for managing the performance history sheet: `EnsurePerfHistorySheet`, `RemovePerfHistoryGhost`, `FindPerfHistoryConflicts`, `PrimePerfHistory`.
+    * Added/Verified utility functions: `CleanUp_GhostSheetsAndOldBackups`, `ReadHistoricalData`, `GetOrCreateTempSheet`, `EnsureConfigSheet`.
+    * Added `PerfDashboardSheetExists` check function.
+
+5.  Module Interactions & Refinements:
+    * Confirmed `modArchival::AddNavigationButtons` is `Public` to allow calls from `modFormatting`.
+    * Verified essential constants (`PERF_HISTORY_SHEET_NAME`, `CONFIG_SHEET_NAME`, `PW_WORKBOOK`) are defined and referenced correctly.
+    * Confirmed `modPerformanceDashboard::BuildPerformanceDataModel_FromDashboard` is `Public` (required by `Module_Dashboard::PrimePerfHistory`).
+
+Current State (After this commit):
+* The VBA project compiles successfully without errors.
+* The core refresh logic (`RefreshDashboard`) integrates calls to `modArchival`, `modFormatting`, and `modPerformanceDashboard`.
+* Active/Archive view generation is functional, including count property setting (`modArchival`).
+* UI cloning for Rows 1 & 2 (`modFormatting`) is implemented and calls dependent functions correctly (`AddNavigationButtons`, `UpdateAllViewCounts`).
+* Performance Dashboard generation (`modPerformanceDashboard`) runs, builds the data model from the main dashboard, creates helper objects (cards/charts - layout pending), and interacts with history/config.
+* User Edit saving (`Worksheet_Change` -> `SaveUserEditsFromDashboard`) and loading (`LoadUserEditsToDictionary` -> `BuildDashboardDataArray`) is operational.
+* Logging uses a performant approach (`Debug.Print` for loops, `DebugLog` for major events).
+* Known Issue: The visual layout and specific appearance of the elements (charts, cards) on the `SQRCT PERF DASH` sheet require review and refinement.
+
+Next Steps:
+* Refine the layout, positioning, sizing, and aesthetics of charts and metric cards on the "SQRCT PERF DASH" sheet (`modPerformanceDashboard`).
+* Perform thorough functional testing of all dashboard refresh modes, Active/Archive views, and performance dashboard generation.
+* Validate data accuracy across all dashboards and views.

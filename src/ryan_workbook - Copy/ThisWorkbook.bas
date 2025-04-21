@@ -1,10 +1,10 @@
 Option Explicit
 
 ' ===============  Auto-snap Engagement Phase & Prompt for 'Other' ===============
-Private Sub Workbook_SheetChange(ByVal sh As Object, ByVal TARGET As Range)
+Private Sub Workbook_SheetChange(ByVal Sh As Object, ByVal target As Range)
 
     ' --- Exit if multiple cells changed ---
-    If TARGET.Cells.CountLarge > 1 Then Exit Sub
+    If target.Cells.CountLarge > 1 Then Exit Sub
 
     ' --- Define columns and sheets to monitor ---
     ' Ensure these constants match your actual sheet names and Module_Dashboard constants
@@ -16,22 +16,22 @@ Private Sub Workbook_SheetChange(ByVal sh As Object, ByVal TARGET As Range)
     Const EDITS_START_ROW As Long = 2
 
     Dim isDash As Boolean, isUE As Boolean
-    isDash = (LCase$(sh.Name) = LCase$(DASH_SHEET) And TARGET.Column = DASH_PHASE_COL)
-    isUE = (LCase$(sh.Name) = LCase$(EDITS_SHEET) And TARGET.Column = EDITS_PHASE_COL)
+    isDash = (LCase$(Sh.Name) = LCase$(DASH_SHEET) And target.Column = DASH_PHASE_COL)
+    isUE = (LCase$(Sh.Name) = LCase$(EDITS_SHEET) And target.Column = EDITS_PHASE_COL)
 
     ' --- Exit if change wasn't in a monitored Phase column ---
     If Not (isDash Or isUE) Then Exit Sub
 
     ' --- Exit if change was in header rows ---
-    If isDash And TARGET.Row < DASH_START_ROW Then Exit Sub
-    If isUE And TARGET.Row < EDITS_START_ROW Then Exit Sub
+    If isDash And target.Row < DASH_START_ROW Then Exit Sub
+    If isUE And target.Row < EDITS_START_ROW Then Exit Sub
 
     ' --- Process the change ---
-    Dim originalValue As Variant: originalValue = TARGET.value ' Store original in case of Undo
+    Dim originalValue As Variant: originalValue = target.value ' Store original in case of Undo
     Application.EnableEvents = False ' Prevent this event from firing itself
     On Error GoTo SafeExit_SheetChange ' Use error handler within this sub
 
-    Dim raw As String: raw = Trim$(CStr(TARGET.value)) ' Use CStr for safety
+    Dim raw As String: raw = Trim$(CStr(target.value)) ' Use CStr for safety
 
     If Len(raw) > 0 Then ' Only process if not blank
         ' --- Find best match using helper function ---
@@ -45,14 +45,14 @@ Private Sub Workbook_SheetChange(ByVal sh As Object, ByVal TARGET As Range)
                    "Please choose from the dropdown list or type a more specific prefix.", _
                    vbExclamation, "Invalid Phase Entry"
             Application.Undo ' Revert the user's typing to original value
-            TARGET.Select ' Re-select the cell
+            target.Select ' Re-select the cell
 
         ' Check if the successfully matched/completed phase starts with "Other ("
-        ElseIf left$(LCase$(bestMatch), 7) = "other (" Then
+        ElseIf Left$(LCase$(bestMatch), 7) = "other (" Then
             ' Handling AFTER EITHER "Other (Active)" OR "Other (Archive)" is entered/completed
             ' Check if the cell value actually changed (prevents prompt if user selects same value again)
-             If TARGET.value <> bestMatch Then
-                 TARGET.value = bestMatch ' Ensure correct casing first
+             If target.value <> bestMatch Then
+                 target.value = bestMatch ' Ensure correct casing first
              End If
 
             MsgBox "You specified """ & bestMatch & """." & vbCrLf & vbCrLf & _
@@ -64,14 +64,14 @@ Private Sub Workbook_SheetChange(ByVal sh As Object, ByVal TARGET As Range)
             ' Optional: Jump cursor to Comments column (N) on the same row
             On Error Resume Next ' Ignore error if selecting cell fails
             ' Ensure DB_COL_COMMENTS constant is Public in Module_Dashboard or use column number (14)
-            sh.Cells(TARGET.Row, Columns(Module_Dashboard.DB_COL_COMMENTS).Column).Select ' FIX: Use numeric index for Cells() before .Select
+            Sh.Cells(target.Row, Columns(Module_Dashboard.DB_COL_COMMENTS).Column).Select ' FIX: Use numeric index for Cells() before .Select
             On Error GoTo SafeExit_SheetChange ' Restore proper error handling
 
-        ElseIf TARGET.value <> bestMatch Then
+        ElseIf target.value <> bestMatch Then
              ' Unique VALID standard match found (not "Other...")
              ' AND it's different from current cell value (could be prefix or just case correction)
              ' Snap to the proper text/casing
-             TARGET.value = bestMatch
+             target.value = bestMatch
         End If
         ' If bestMatch is same as Target.Value, do nothing (already correct)
 
@@ -87,5 +87,3 @@ SafeExit_SheetChange:
     Application.EnableEvents = True ' Re-enable events
 
 End Sub
-
-

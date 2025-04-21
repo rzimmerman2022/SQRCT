@@ -199,7 +199,7 @@ ArchivalCleanup:   ' Cleanup label for both normal exit and error
     On Error Resume Next ' Ignore errors during cleanup itself
     Application.StatusBar = originalStatusBar ' Restore original status bar text
     Set wsDash = Nothing
-    Module_Dashboard.DebugLog "RefreshAllViews", "EXIT (Cleanup Complete). Time: " & format(Timer - t1, "0.00") & "s"
+    Module_Dashboard.DebugLog "RefreshAllViews", "EXIT (Cleanup Complete). Time: " & Format(Timer - t1, "0.00") & "s"
     Exit Sub ' Explicit Exit for clarity after normal completion or cleanup jump
 
 ArchivalErrorHandler: ' Error handler for this sub
@@ -297,7 +297,7 @@ RefreshActivateCleanup:
     ' --- Restore ONLY StatusBar ---
     Application.StatusBar = originalStatusBar ' Clear status bar
     Set wsDash = Nothing
-    Module_Dashboard.DebugLog "RefreshAndActivate", "EXIT (Cleanup Complete) for '" & viewName & "'. Time: " & format(Timer - t1, "0.00") & "s"
+    Module_Dashboard.DebugLog "RefreshAndActivate", "EXIT (Cleanup Complete) for '" & viewName & "'. Time: " & Format(Timer - t1, "0.00") & "s"
     Exit Sub
 
 RefreshActivateErrorHandler:
@@ -359,7 +359,7 @@ RefreshActive_Cleanup: ' Cleanup label
         Module_Dashboard.DebugLog "RefreshActiveView", "Cleanup: Application.EnableEvents already True."
     End If
     Set wsTgt = Nothing
-    Module_Dashboard.DebugLog "RefreshActiveView", "EXIT (Cleanup Complete). Time: " & format(Timer - t1, "0.00") & "s"
+    Module_Dashboard.DebugLog "RefreshActiveView", "EXIT (Cleanup Complete). Time: " & Format(Timer - t1, "0.00") & "s"
     Exit Sub ' Normal exit from cleanup
 
 RefreshActive_Error:
@@ -412,7 +412,7 @@ RefreshArchive_Cleanup: ' Cleanup label
     Module_Dashboard.DebugLog "RefreshArchiveView", "Cleanup Label Reached."
     On Error Resume Next ' Ignore errors during cleanup
     Set wsTgt = Nothing
-    Module_Dashboard.DebugLog "RefreshArchiveView", "EXIT (Cleanup Complete). Time: " & format(Timer - t1, "0.00") & "s"
+    Module_Dashboard.DebugLog "RefreshArchiveView", "EXIT (Cleanup Complete). Time: " & Format(Timer - t1, "0.00") & "s"
     Exit Sub ' Normal exit from cleanup
 
 RefreshArchive_Error:
@@ -498,7 +498,7 @@ Private Sub CopyFilteredRows(wsSrc As Worksheet, wsTgt As Worksheet, _
             Module_Dashboard.DebugLog "CopyFilteredRows", "Set ActiveRecords Property: 0 (No data)"
         End If
 
-        Module_Dashboard.DebugLog "CopyFilteredRows", "EXIT (No data case). Time: " & format(Timer - t1, "0.00") & "s"
+        Module_Dashboard.DebugLog "CopyFilteredRows", "EXIT (No data case). Time: " & Format(Timer - t1, "0.00") & "s"
         Exit Sub
     End If
 
@@ -715,7 +715,7 @@ AfterWrite: ' Label to jump to after successful write
     ' Clean up memory
     Erase arrData
     If IsArray(finalOutputData) Then Erase finalOutputData ' Erase the final array if it was created
-    Module_Dashboard.DebugLog "CopyFilteredRows", "EXIT (Normal). Time: " & format(Timer - t1, "0.00") & "s"
+    Module_Dashboard.DebugLog "CopyFilteredRows", "EXIT (Normal). Time: " & Format(Timer - t1, "0.00") & "s"
     Exit Sub ' Normal Exit
 
 CopyFilteredRows_Error:
@@ -776,12 +776,12 @@ Private Function SheetExists(sName As String) As Boolean
     ' Purpose: Checks if a sheet (of any type) with the given name exists in ThisWorkbook.
     ' Returns: True if a sheet with the specified name exists, False otherwise.
     ' Called By: RefreshActiveView, RefreshArchiveView (Defensive Checks), GetOrCreateSheet
-    Dim sh As Object ' Use Object to check any sheet type (Worksheet, Chart, etc.)
+    Dim Sh As Object ' Use Object to check any sheet type (Worksheet, Chart, etc.)
     On Error Resume Next ' Prevent error if sheet doesn't exist, allowing Sh to remain Nothing
-    Set sh = ThisWorkbook.Sheets(sName)
-    SheetExists = Not sh Is Nothing ' If Sh is Nothing, sheet doesn't exist
+    Set Sh = ThisWorkbook.Sheets(sName)
+    SheetExists = Not Sh Is Nothing ' If Sh is Nothing, sheet doesn't exist
     On Error GoTo 0 ' Restore default error handling
-    Set sh = Nothing ' Release object
+    Set Sh = Nothing ' Release object
 End Function
 
 Private Function GetOrCreateSheet(sName As String, sTitle As String, _
@@ -816,7 +816,7 @@ Private Function GetOrCreateSheet(sName As String, sTitle As String, _
         If Not anySheet Is Nothing Then
              Module_Dashboard.DebugLog "GetOrCreateSheet", "WARNING: A non-worksheet object named '" & sName & "' exists (Type: " & TypeName(anySheet) & "). Renaming it."
              On Error Resume Next ' Handle error renaming
-             anySheet.Name = sName & "_Old_" & format(Now, "hhmmss") ' Append timestamp to rename
+             anySheet.Name = sName & "_Old_" & Format(Now, "hhmmss") ' Append timestamp to rename
              If Err.Number <> 0 Then
                  Module_Dashboard.DebugLog "GetOrCreateSheet", "ERROR: Failed to rename existing non-worksheet '" & sName & "'. Aborting. Err=" & Err.Number & ": " & Err.Description
                  Set GetOrCreateSheet = Nothing: Exit Function ' Cannot proceed
@@ -921,7 +921,7 @@ Private Function GetOrCreateSheet(sName As String, sTitle As String, _
 
 GetOrCreateSheet_Cleanup:
     Set GetOrCreateSheet = ws ' Return the sheet object (might be Nothing if error occurred)
-    Module_Dashboard.DebugLog "GetOrCreateSheet", "EXIT. Returning sheet object (Is Nothing = " & (ws Is Nothing) & "). Time: " & format(Timer - t1, "0.00") & "s"
+    Module_Dashboard.DebugLog "GetOrCreateSheet", "EXIT. Returning sheet object (Is Nothing = " & (ws Is Nothing) & "). Time: " & Format(Timer - t1, "0.00") & "s"
     Exit Function ' Normal exit
 
 GetOrCreateSheet_Error:
@@ -1081,7 +1081,7 @@ ApplyViewFormatting_Cleanup:
     Module_Dashboard.DebugLog "ApplyViewFormatting", "Cleanup Label Reached."
     Application.ScreenUpdating = True ' Restore screen updating
     Set wsSrc = Nothing
-    Module_Dashboard.DebugLog "ApplyViewFormatting", "EXIT (Cleanup Complete). Time: " & format(Timer - t1, "0.00") & "s"
+    Module_Dashboard.DebugLog "ApplyViewFormatting", "EXIT (Cleanup Complete). Time: " & Format(Timer - t1, "0.00") & "s"
     Exit Sub ' Normal Exit
 
 ApplyViewFormatting_Error:
@@ -1099,10 +1099,10 @@ Public Sub AddNavigationButtons(ws As Worksheet) ' Made Public as it's called by
     '          by a central routine (e.g., modUtilities.UpdateAllViewCounts) that reads the properties.
     ' Called By: ApplyViewFormatting (for Active/Archive sheets), Module_Dashboard.RefreshDashboard (for main Dashboard sheet)
 
-    Const topRow As Long = 2
+    Const TOPROW As Long = 2
     Const BTN_H As Double = 24      ' Standard button height (used by ModernButton)
     ' Button widths are defined in the btnDefs array below
-    Dim btnDefs As Variant, def As Variant, shp As Shape, TARGET As Range, i As Long
+    Dim btnDefs As Variant, def As Variant, shp As Shape, target As Range, i As Long
     Dim t1 As Double: t1 = Timer
 
     ' --- Define each button: { Target Cell Address, Caption, Macro Name, Width } ---
@@ -1126,7 +1126,7 @@ Public Sub AddNavigationButtons(ws As Worksheet) ' Made Public as it's called by
     ws.Unprotect Password:=Module_Dashboard.PW_WORKBOOK ' Unprotect sheet to modify shapes/content
     Dim deleteCount As Long: deleteCount = 0
     For Each shp In ws.Shapes ' Delete ANY shape anchored anywhere in Row 2
-        If shp.TopLeftCell.Row = topRow Then
+        If shp.TopLeftCell.Row = TOPROW Then
             ' Be specific about deleting only buttons created by this process if possible
             ' Using name patterns or checking Type can help avoid deleting other shapes.
             If shp.Name Like "btn_*" Or shp.Name Like "nav*" Or shp.Type = msoFormControl Then ' Example patterns
@@ -1135,33 +1135,33 @@ Public Sub AddNavigationButtons(ws As Worksheet) ' Made Public as it's called by
             End If
         End If
     Next shp
-    ws.Range("B" & topRow & ":N" & topRow).ClearContents ' Clear all cell content from B2:N2 (Leaves A2 intact if needed)
-    ws.Range("B" & topRow & ":N" & topRow).UnMerge       ' Unmerge all relevant cells just in case
+    ws.Range("B" & TOPROW & ":N" & TOPROW).ClearContents ' Clear all cell content from B2:N2 (Leaves A2 intact if needed)
+    ws.Range("B" & TOPROW & ":N" & TOPROW).UnMerge       ' Unmerge all relevant cells just in case
     If Err.Number <> 0 Then Module_Dashboard.DebugLog "AddNavigationButtons", "Warning during clear/unmerge: Err=" & Err.Number: Err.Clear
     On Error GoTo AddNav_Error ' Restore error handler
-    Module_Dashboard.DebugLog "AddNavigationButtons", "Cleared Row " & topRow & ". Deleted " & deleteCount & " shapes."
+    Module_Dashboard.DebugLog "AddNavigationButtons", "Cleared Row " & TOPROW & ". Deleted " & deleteCount & " shapes."
 
     '----- create the five buttons ------------------------------------
     Module_Dashboard.DebugLog "AddNavigationButtons", "Creating buttons..."
     For i = LBound(btnDefs) To UBound(btnDefs) ' Loop through button definitions array
         def = btnDefs(i) ' Get definition for current button
-        Set TARGET = Nothing ' Reset target object
+        Set target = Nothing ' Reset target object
         On Error Resume Next
-        Set TARGET = ws.Range(def(0)) ' Get target Cell object (e.g., Range("C2"))
+        Set target = ws.Range(def(0)) ' Get target Cell object (e.g., Range("C2"))
         On Error GoTo AddNav_Error
 
-        If TARGET Is Nothing Then
+        If target Is Nothing Then
             Module_Dashboard.DebugLog "AddNavigationButtons", "ERROR: Invalid target cell '" & def(0) & "'. Skipping button creation."
         Else
             Set shp = Nothing ' Reset shape object
             ' Call ModernButton factory function (in Module_Dashboard) to create the styled button shape
-            Set shp = Module_Dashboard.ModernButton(ws, TARGET, def(1), def(2), def(3)) ' Pass definition array elements: ws, TargetCell, Caption, Macro, Width
+            Set shp = Module_Dashboard.ModernButton(ws, target, def(1), def(2), def(3)) ' Pass definition array elements: ws, TargetCell, Caption, Macro, Width
 
             If Not shp Is Nothing Then ' Check if button creation succeeded
 
                 ' --- Adjust Height for Nav Buttons (Optional visual tweak) ---
                 If def(0) = "F2" Or def(0) = "G2" Or def(0) = "H2" Then
-                    shp.height = 18 ' Use shorter height for F/G/H buttons for visual distinction
+                    shp.Height = 18 ' Use shorter height for F/G/H buttons for visual distinction
                     Module_Dashboard.DebugLog "AddNavigationButtons", "Adjusted height to 18 for: " & def(1)
                 End If
                 ' Note: Width is handled by ModernButton based on def(3) parameter (0=autofit, >0=fixed)
@@ -1170,8 +1170,8 @@ Public Sub AddNavigationButtons(ws As Worksheet) ' Made Public as it's called by
                 On Error Resume Next ' Handle errors modifying shape properties
                 shp.Name = "btn_" & Replace(def(1), " ", "_") ' Set final name (e.g., btn_Standard_Refresh)
                 ' Recalculate Left/Top for precise centering within the target cell after potential height/width adjustments
-                shp.left = TARGET.left + (TARGET.width - shp.width) / 2
-                shp.top = TARGET.top + (TARGET.height - shp.height) / 2
+                shp.Left = target.Left + (target.Width - shp.Width) / 2
+                shp.Top = target.Top + (target.Height - shp.Height) / 2
                 If Err.Number <> 0 Then Module_Dashboard.DebugLog "AddNavigationButtons", "Warning: Error centering/naming '" & shp.Name & "'. Err=" & Err.Number: Err.Clear
                 On Error GoTo AddNav_Error ' Restore handler
             Else
@@ -1187,8 +1187,8 @@ Public Sub AddNavigationButtons(ws As Worksheet) ' Made Public as it's called by
 
     Module_Dashboard.DebugLog "AddNavigationButtons", "Setting timestamp in N2..."
     On Error Resume Next
-    With ws.Range("N" & topRow) ' N2 - Timestamp ONLY
-        .value = "Refreshed: " & format$(Now(), "mm/dd hh:nn AM/PM") ' Use your preferred format
+    With ws.Range("N" & TOPROW) ' N2 - Timestamp ONLY
+        .value = "Refreshed: " & Format$(Now(), "mm/dd hh:nn AM/PM") ' Use your preferred format
         .Font.Size = 9
         .Font.Italic = True ' Italic is fine for the timestamp aesthetic
         .HorizontalAlignment = xlLeft ' Align left within N2
@@ -1204,17 +1204,13 @@ Public Sub AddNavigationButtons(ws As Worksheet) ' Made Public as it's called by
     Module_Dashboard.DebugLog "AddNavigationButtons", "Skipping re-protection within this sub."
 
 
-    Module_Dashboard.DebugLog "AddNavigationButtons", "EXIT (Normal - Buttons/Timestamp Only). Time: " & format(Timer - t1, "0.00") & "s"
+    Module_Dashboard.DebugLog "AddNavigationButtons", "EXIT (Normal - Buttons/Timestamp Only). Time: " & Format(Timer - t1, "0.00") & "s"
     Exit Sub
 
 AddNav_Error: ' Error Handler for this subroutine
     Module_Dashboard.DebugLog "AddNavigationButtons", "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     Module_Dashboard.DebugLog "AddNavigationButtons", "ERROR Handler! Sheet='" & IIf(ws Is Nothing, "UNKNOWN", ws.Name) & "'. Err=" & Err.Number & ": " & Err.Description & " near line " & Erl
     Module_Dashboard.DebugLog "AddNavigationButtons", "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    Set shp = Nothing: Set TARGET = Nothing ' Clean up objects
+    Set shp = Nothing: Set target = Nothing ' Clean up objects
     ' Consider whether to attempt re-protection on error if sheet was unprotected
 End Sub
-
-
-
-

@@ -15,4 +15,3 @@ Public Const WORKBOOK_IDENTITY As String = "RZ"  ' CHANGE THIS VALUE PER WORKBOO
 Public Function GetWorkbookIdentity() As String
     GetWorkbookIdentity = WORKBOOK_IDENTITY
 End Function
-

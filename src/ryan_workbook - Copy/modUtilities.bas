@@ -55,7 +55,7 @@ Public Function GetPhaseFromPrefix(txt As String) As String
              candidate = LCase$(Trim$(CStr(cell.value))) ' Normalize list value for comparison
 
              ' Check if input is an exact match (case-insensitive) OR a prefix match
-             If candidate = normalizedInput Or left$(candidate, Len(normalizedInput)) = normalizedInput Then
+             If candidate = normalizedInput Or Left$(candidate, Len(normalizedInput)) = normalizedInput Then
                  If matchCount = 0 Then
                      ' First match found
                      hit = CStr(cell.value) ' Store the correctly cased value from the list
@@ -383,7 +383,13 @@ End Sub
 ' Centralized formatting logic moved to modFormatting.ExactlyCloneDashboardFormatting.
 
 
-' --- Duplicate DebugLog Sub REMOVED (04/20/2025) ---
-' The primary DebugLog should reside in Module_Dashboard and be Public.
-
-
+' --- Dummy DebugLog Sub (if not already present in modUtilities) ---
+' Add this simple version if your modUtilities doesn't have logging setup,
+' otherwise remove this and ensure your existing DebugLog handles two string arguments.
+' Assumes Module_Dashboard and its DEBUG_LOGGING constant are accessible.
+' *** REMOVED DUPLICATE DEFINITION ***
+Private Sub DebugLog(procedureName As String, message As String)
+    If Module_Dashboard.DEBUG_LOGGING Then ' Assumes DEBUG_LOGGING constant exists in Module_Dashboard
+        Debug.Print Format$(Now(), "hh:nn:ss") & " [" & procedureName & "] " & message
+    End If
+End Sub

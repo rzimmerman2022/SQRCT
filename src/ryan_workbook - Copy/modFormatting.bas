@@ -38,8 +38,8 @@ Public Sub ExactlyCloneDashboardFormatting(targetSheet As Worksheet, viewType As
     Module_Dashboard.DebugLog "ExactlyCloneDashboardFormatting", "Beginning exact replication for " & targetSheet.Name
 
     ' --- Step 1: Copy Row Height from Dashboard ---
-    targetSheet.rows(2).RowHeight = sourceDashboard.rows(2).RowHeight
-    Module_Dashboard.DebugLog "ExactlyCloneDashboardFormatting", "Copied Row 2 height: " & targetSheet.rows(2).RowHeight
+    targetSheet.Rows(2).RowHeight = sourceDashboard.Rows(2).RowHeight
+    Module_Dashboard.DebugLog "ExactlyCloneDashboardFormatting", "Copied Row 2 height: " & targetSheet.Rows(2).RowHeight
 
     ' --- Step 2: Copy Column Widths from Dashboard to match exactly ---
     Dim col As Range
@@ -62,7 +62,7 @@ Public Sub ExactlyCloneDashboardFormatting(targetSheet As Worksheet, viewType As
     ' --- Step 4: Set A2 "CONTROL PANEL" text and specific formatting ---
     ' Explicitly set A2 style AFTER PasteSpecial to ensure desired look.
     With targetSheet.Range("A2")
-        .value = "CONTROL PANEL" ' Set text
+        .Value = "CONTROL PANEL" ' Set text
         .Font.Bold = True
         .Font.Size = 10
         .Font.Name = "Segoe UI"
@@ -90,7 +90,7 @@ Public Sub ExactlyCloneDashboardFormatting(targetSheet As Worksheet, viewType As
         If .MergeCells Then .UnMerge
         .ClearContents ' Clear before merging
         .Merge
-        .value = titleText
+        .Value = titleText
         .HorizontalAlignment = xlCenter
         .VerticalAlignment = xlCenter
         .Font.Size = 18
@@ -201,9 +201,9 @@ Public Sub VerifyExactFormatting()
 
     ' Compare Row Heights
     msg = msg & "Row 2 Heights:" & vbCrLf
-    msg = msg & "  Dashboard: " & wsDash.rows(2).RowHeight & vbCrLf
-    msg = msg & "  Active:    " & wsActive.rows(2).RowHeight & vbCrLf
-    msg = msg & "  Archive:   " & wsArchive.rows(2).RowHeight & vbCrLf & vbCrLf
+    msg = msg & "  Dashboard: " & wsDash.Rows(2).RowHeight & vbCrLf
+    msg = msg & "  Active:    " & wsActive.Rows(2).RowHeight & vbCrLf
+    msg = msg & "  Archive:   " & wsArchive.Rows(2).RowHeight & vbCrLf & vbCrLf
 
     ' Compare A2 formatting in detail
     msg = msg & "A2 Cell Detail:" & vbCrLf
@@ -266,7 +266,7 @@ Private Sub LogSheetFormatting(ws As Worksheet, sheetType As String)
     For Each c In ws.Range("A2:N2").Cells
         Debug.Print "  " & c.Address(False, False) & ": " & _
             "BGColor=" & c.Interior.Color & ", " & _
-            "Content='" & c.value & "', " & _
+            "Content='" & c.Value & "', " & _
             "Font=" & c.Font.Name & ", " & _
             "Size=" & c.Font.Size & ", " & _
             "Bold=" & c.Font.Bold & ", " & _
@@ -274,9 +274,9 @@ Private Sub LogSheetFormatting(ws As Worksheet, sheetType As String)
     Next c
 
     Debug.Print "ROW HEIGHTS:"
-    Debug.Print "  Row 1: " & ws.rows(1).RowHeight
-    Debug.Print "  Row 2: " & ws.rows(2).RowHeight
-    Debug.Print "  Row 3: " & ws.rows(3).RowHeight
+    Debug.Print "  Row 1: " & ws.Rows(1).RowHeight
+    Debug.Print "  Row 2: " & ws.Rows(2).RowHeight
+    Debug.Print "  Row 3: " & ws.Rows(3).RowHeight
 
     Debug.Print "COLUMN WIDTHS (A:N):"
     Dim col As Long
@@ -287,7 +287,3 @@ Private Sub LogSheetFormatting(ws As Worksheet, sheetType As String)
     Debug.Print "----------------------------------------" & vbCrLf
     On Error GoTo 0
 End Sub
-
-
-
-
