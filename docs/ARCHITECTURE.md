@@ -1,9 +1,37 @@
-SQRCT System Architecture (Updated Apr 20, 2025)
+SQRCT System Architecture (Updated July 30, 2025)
 1. Introduction
 This document describes the architecture of the SQRCT (Strategic Quote Recovery & Conversion Tracker) system in its current Excel-based implementation. It details the major components, data flow, data models, error handling, and security considerations based on the Power Query M code and VBA modules developed for the User/Master workbooks and the separate SyncTool workbook.
 The primary purpose of this system is to track sales quotes, automate follow-up stage calculation, allow user input for engagement tracking via a standardized interface, provide distinct filtered views for Active and Archived quotes, and synchronize user edits into a master dataset, all within the Microsoft Excel environment.
 2. High-Level Overview
 The SQRCT system operates across multiple interconnected Excel workbooks: individual user workbooks (e.g., for Ryan "RZ", Ally "AF") and a central "Automated Master" workbook. A separate "SyncTool" workbook orchestrates the merging of user edit data between these files.
+
+## Repository Structure (Gold Standard Organization)
+Following industry best practices, the codebase is organized as follows:
+
+```
+SQRCT/
+├── src/
+│   ├── vba/
+│   │   ├── core/                    # Shared VBA modules (modArchival, modUtilities, etc.)
+│   │   └── workbooks/               # Workbook-specific VBA code
+│   │       ├── ally/                # Ally's user workbook modules
+│   │       ├── master/              # Master workbook modules  
+│   │       ├── ryan/                # Ryan's user workbook modules
+│   │       │   └── backup/          # Historical VBA backups
+│   │       └── sync_tool/           # SyncTool workbook modules
+│   └── power_query/                 # Power Query M language scripts
+├── docs/
+│   ├── updates/                     # Project update logs
+│   └── word/                        # Word document archives
+└── archives/commits/                # Historical commit files
+```
+
+This structure provides:
+- **Clear separation** between VBA and Power Query code
+- **Modular organization** by workbook and function
+- **Centralized core modules** for shared functionality
+- **Comprehensive documentation** structure
+- **Archive management** for historical files
 Core Components:
 •	Data Sources: Network folders (daily CSV quote exports), local Excel tables (historical data).
 •	Power Query Engine (within User/Master Workbooks): Ingests (CSVQuotes, ExistingQuotes), merges (MasterQuotes_Raw), transforms, calculates status (AutoStage, AutoNote), and prepares the final quote dataset (MasterQuotes_Final).
