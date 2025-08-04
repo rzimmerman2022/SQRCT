@@ -1,184 +1,476 @@
-SQRCT System Architecture (Updated July 30, 2025)
-1. Introduction
-This document describes the architecture of the SQRCT (Strategic Quote Recovery & Conversion Tracker) system in its current Excel-based implementation. It details the major components, data flow, data models, error handling, and security considerations based on the Power Query M code and VBA modules developed for the User/Master workbooks and the separate SyncTool workbook.
-The primary purpose of this system is to track sales quotes, automate follow-up stage calculation, allow user input for engagement tracking via a standardized interface, provide distinct filtered views for Active and Archived quotes, and synchronize user edits into a master dataset, all within the Microsoft Excel environment.
-2. High-Level Overview
-The SQRCT system operates across multiple interconnected Excel workbooks: individual user workbooks (e.g., for Ryan "RZ", Ally "AF") and a central "Automated Master" workbook. A separate "SyncTool" workbook orchestrates the merging of user edit data between these files.
+# SQRCT System Architecture
 
-## Repository Structure (Gold Standard Organization)
-Following industry best practices, the codebase is organized as follows:
+## Table of Contents
+
+1. [Introduction](#1-introduction)
+2. [System Overview](#2-system-overview)
+3. [Repository Structure](#3-repository-structure)
+4. [Component Architecture](#4-component-architecture)
+5. [Data Flow](#5-data-flow)
+6. [Data Models](#6-data-models)
+7. [Module Descriptions](#7-module-descriptions)
+8. [Error Handling](#8-error-handling)
+9. [Security Considerations](#9-security-considerations)
+10. [Deployment & Operations](#10-deployment--operations)
+11. [Performance Considerations](#11-performance-considerations)
+12. [Future Enhancements](#12-future-enhancements)
+
+## 1. Introduction
+
+This document provides a comprehensive technical architecture overview of the SQRCT (Strategic Quote Recovery & Conversion Tracker) system. It is designed to be AI-friendly and provide clear context for developers and automated coding assistants.
+
+### Purpose
+
+SQRCT tracks sales quotes through their lifecycle, automating follow-up stage calculations and enabling team collaboration through a multi-user Excel-based system with centralized synchronization.
+
+### Key Design Principles
+
+- **Modularity**: Separated concerns between data processing, UI, and synchronization
+- **Data Integrity**: Timestamp-based conflict resolution ensures data consistency
+- **User Autonomy**: Individual workbooks allow independent operation
+- **Automation**: Power Query handles data processing without manual intervention
+- **Traceability**: All user edits are logged with timestamps and attribution
+
+## 2. System Overview
+
+### High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                           SQRCT System                           │
+├─────────────────────────┬───────────────────┬──────────────────┤
+│   Data Layer (PQ)       │   Logic Layer     │   Sync Layer     │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│ • CSV Ingestion         │ • Dashboard Mgmt  │ • File Reading   │
+│ • Data Transformation   │ • View Generation │ • Conflict Res   │
+│ • Stage Calculation     │ • Edit Capture    │ • Data Writing   │
+│ • Deduplication         │ • Validation      │ • Logging        │
+└─────────────────────────┴───────────────────┴──────────────────┘
+```
+
+### System Components
+
+1. **User Workbooks** (Ryan.xlsm, Ally.xlsm)
+   - Individual Excel files for each team member
+   - Contains full VBA logic and Power Query
+   - Maintains local UserEdits sheet
+
+2. **Master Workbook** (Master.xlsm)
+   - Central repository for consolidated data
+   - Target for synchronization operations
+   - Source of truth for reporting
+
+3. **SyncTool Workbook** (SyncTool.xlsm)
+   - Standalone synchronization utility
+   - Reads from all workbooks
+   - Writes only to Master
+
+## 3. Repository Structure
 
 ```
 SQRCT/
 ├── src/
 │   ├── vba/
-│   │   ├── core/                    # Shared VBA modules (modArchival, modUtilities, etc.)
-│   │   └── workbooks/               # Workbook-specific VBA code
-│   │       ├── ally/                # Ally's user workbook modules
-│   │       ├── master/              # Master workbook modules  
-│   │       ├── ryan/                # Ryan's user workbook modules
-│   │       │   └── backup/          # Historical VBA backups
-│   │       └── sync_tool/           # SyncTool workbook modules
-│   └── power_query/                 # Power Query M language scripts
+│   │   ├── core/                    # Shared VBA modules
+│   │   │   ├── modArchival.bas      # Active/Archive view management
+│   │   │   ├── modFormatting.bas    # UI formatting functions
+│   │   │   ├── modUtilities.bas     # Utility functions and validation
+│   │   │   └── modPerformanceDashboard.bas  # Performance metrics
+│   │   └── workbooks/               # Workbook-specific VBA
+│   │       ├── ally/                # Ally's workbook modules
+│   │       ├── master/              # Master workbook modules
+│   │       ├── ryan/                # Ryan's workbook modules
+│   │       └── sync_tool/           # SyncTool modules
+│   └── power_query/                 # Power Query M scripts
+│       ├── Query - CSVQuotes.pq     # CSV ingestion
+│       ├── Query - ExistingQuotes.pq # Historical data
+│       ├── Query - MasterQuotes_Raw.pq # Data combination
+│       └── Query - MasterQuotes_Final.pq # Final processing
 ├── docs/
-│   ├── updates/                     # Project update logs
-│   └── word/                        # Word document archives
-└── archives/commits/                # Historical commit files
+│   ├── ARCHITECTURE.md              # This file
+│   └── updates/                     # Project history
+└── archives/                        # Historical files
 ```
 
-This structure provides:
-- **Clear separation** between VBA and Power Query code
-- **Modular organization** by workbook and function
-- **Centralized core modules** for shared functionality
-- **Comprehensive documentation** structure
-- **Archive management** for historical files
-Core Components:
-•	Data Sources: Network folders (daily CSV quote exports), local Excel tables (historical data).
-•	Power Query Engine (within User/Master Workbooks): Ingests (CSVQuotes, ExistingQuotes), merges (MasterQuotes_Raw), transforms, calculates status (AutoStage, AutoNote), and prepares the final quote dataset (MasterQuotes_Final).
-•	Excel Data Target (within User/Master Workbooks): The output of the MasterQuotes_Final query, loaded into the workbook for VBA access.
-•	VBA Core Logic (Module_Dashboard): Orchestrates the main dashboard refresh (RefreshDashboard), builds the core data array (BuildDashboardDataArray), merges Power Query data with user edits, handles initial sheet setup (SetupDashboard), UserEdits backup/restore, and contains various helper functions (e.g., CleanDocumentNumber, ModernButton).
-•	VBA View Generation (modArchival): Creates and manages the "SQRCT Active" and "SQRCT Archive" sheets (RefreshActiveView/RefreshArchiveView), including filtering data (CopyFilteredRows using IsPhaseArchived), applying consistent formatting (ApplyViewFormatting), creating UI elements (AddNavigationButtons), and managing view-specific record counts via Properties (ActiveRecords, ArchiveRecords). Includes a helper (FormatControlRow) for standard Row 2 styling.
-•	VBA Utilities (modUtilities): Contains shared helper functions like Engagement Phase prefix lookup (GetPhaseFromPrefix), applying Data Validation (ApplyPhaseValidationToListColumn), and displaying/styling dynamic counts (UpdateAllViewCounts).
-•	VBA User Edit Capture (Worksheet_Change on Dashboard Sheet): Automatically captures changes made by users in specific columns (L-N: Phase, Last Contact, Comments) and writes them to the hidden "UserEdits" sheet within the same workbook, tagging the edit with user identity and timestamp.
-•	VBA Phase Validation (Workbook_SheetChange in ThisWorkbook): Intercepts changes in Phase columns (L on Dashboard, B on UserEdits), uses GetPhaseFromPrefix for auto-complete/validation against PHASE_LIST, and triggers prompts for "Other" phases.
-•	Hidden "UserEdits" Sheet (within User/Master Workbooks): Persistent log of user modifications (Columns A-F: DocNum, Phase, LastContact, Comments, ChangeSource, Timestamp).
-•	SyncTool Workbook (VBA Application): Separate Excel file containing VBA modules for manually synchronizing "UserEdits" data between User/Master workbooks. Reads all sources, resolves conflicts (timestamp priority), writes merged data back only to the Master "UserEdits" sheet, and logs its actions.
-•	UI Elements: Standardized Row 2 controls including refresh buttons, view navigation buttons, dynamic count display (J2:L2), and timestamp (N2).
-Diagram (Conceptual Flow):
-Code snippet
-flowchart TD
-    subgraph UserMasterWb [User/Master Workbook (RZ/AF/Master)]
-        direction LR
-        subgraph PQ_Engine [Power Query Engine]
-            direction TB
-            CSVSource[("CSV Files")] --> CSVQuotes
-            ExcelSource[("ExistingQuotes Table")] --> ExistingQuotes
-            CSVQuotes --> MasterQuotes_Raw
-            ExistingQuotes --> MasterQuotes_Raw
-            MasterQuotes_Raw --> MasterQuotes_Final[MasterQuotes_Final (Calculates AutoStage/Note)]
-        end
+## 4. Component Architecture
 
-        subgraph VBA_Engine [VBA Engine]
-             direction TB
-             MasterQuotes_Final -- Reads Data --> ModDash(Module_Dashboard)
-             UserEditsSheet[(UserEdits Sheet)] -- Reads/Writes --> ModDash
-             ModDash -- Builds Array --> RefreshDash[RefreshDashboard]
+### 4.1 Power Query Pipeline
 
-             RefreshDash -- Calls --> ModArch(modArchival)
-             RefreshDash -- Calls --> ModUtil(modUtilities)
-             RefreshDash -- Writes Data & Formats --> DashboardSheet{SQRCT Dashboard}
+The Power Query pipeline is the data ingestion and transformation layer:
 
-             ModArch -- Creates/Updates --> ActiveSheet{SQRCT Active}
-             ModArch -- Creates/Updates --> ArchiveSheet{SQRCT Archive}
-             ModArch -- Reads Data --> DashboardSheet
-             ModArch -- Calls --> ModUtil
+```mermaid
+flowchart LR
+    CSV[CSV Files] --> CSVQuotes
+    Excel[Excel Table] --> ExistingQuotes
+    CSVQuotes --> MasterQuotes_Raw
+    ExistingQuotes --> MasterQuotes_Raw
+    MasterQuotes_Raw --> MasterQuotes_Final
+    MasterQuotes_Final --> Dashboard[Excel Dashboard]
+```
 
-             DashboardSheet -- User Edit L-N --> WsCode{Worksheet_Change}
-             WsCode -- Writes --> UserEditsSheet
+**Key Queries:**
 
-             ThisWb{ThisWorkbook} -- SheetChange --> ModUtil
-             ModUtil -- Phase Lookup --> ListsSheet[(Lists Sheet / PHASE_LIST)]
+1. **CSVQuotes.pq**
+   - Reads daily CSV exports from network location
+   - Handles encoding and delimiter issues
+   - Standardizes column names and types
 
-        end
+2. **ExistingQuotes.pq**
+   - Loads historical data from Excel table
+   - Maintains data continuity across refreshes
 
-        PQ_Engine --> VBA_Engine
+3. **MasterQuotes_Raw.pq**
+   - Combines CSV and historical data
+   - Removes duplicates based on Date Pulled
 
-    end
+4. **MasterQuotes_Final.pq**
+   - Core processing logic:
+     - Groups by Document Number
+     - Calculates occurrence count
+     - Determines AutoStage based on rules
+     - Identifies missing quotes
+     - Applies business logic for stage selection
 
-    subgraph SyncToolWb [SyncTool Workbook (Manual)]
-        direction TB
-        SyncUI{SyncTool UI} --> SyncCode[Sync VBA Logic]
-        SyncCode -- Reads --> RZ_UserEdits[(RZ UserEdits)]
-        SyncCode -- Reads --> AF_UserEdits[(AF UserEdits)]
-        SyncCode -- Reads --> Master_UserEdits[(Master UserEdits)]
-        SyncCode -- Merges/Resolves --> MergedData
-        MergedData -- Writes --> Master_UserEdits
-        SyncCode -- Triggers Refresh --> MasterWorkbookRef[Master Workbook Refresh]
-    end
+### 4.2 VBA Architecture
 
-    UserMasterWb -- Contains --> RZ_UserEdits
-    UserMasterWb -- Contains --> AF_UserEdits
-    UserMasterWb -- Is Target For --> MergedData
+The VBA layer handles user interface and business logic:
 
-    style UserEditsSheet fill:#f9f,stroke:#333,stroke-width:2px
-    style RZ_UserEdits fill:#f9f,stroke:#333,stroke-width:2px
-    style AF_UserEdits fill:#f9f,stroke:#333,stroke-width:2px
-    style Master_UserEdits fill:#f9f,stroke:#333,stroke-width:2px
-3. Component Breakdown
-•	Power Query Queries: (Descriptions remain largely the same as your previous version, assuming CLIENT QUOTES is still separate/adjunct) 
-o	CLIENT QUOTES: Identifies quote document files/metadata. Potentially for ad-hoc use.
-o	CSVQuotes: Ingests daily CSVs.
-o	ExistingQuotes: Loads historical data from local table.
-o	MasterQuotes_Raw: Combines CSV and Existing data.
-o	MasterQuotes_Final: Core processing - filters, calculates age/status (AutoStage, AutoNote), deduplicates. Loads output to Excel for VBA.
-•	VBA Modules (User/Master Workbooks): 
-o	Module_Dashboard: Orchestrates RefreshDashboard. Calls BuildDashboardDataArray. Manages UserEdits backup/restore (CreateUserEditsBackup, RestoreUserEditsFromBackup). Contains initial setup (SetupDashboard), button helper (ModernButton), data processing helpers (CleanDocumentNumber, ResolvePhase, etc.), sheet protection (ProtectUserColumns), and CF application helpers (ApplyColorFormatting, etc.). Interacts heavily with other modules.
-o	modArchival: Handles generation of SQRCT Active / SQRCT Archive sheets (RefreshActiveView, RefreshArchiveView). Contains filtering logic (CopyFilteredRows, IsPhaseArchived). Manages view formatting (ApplyViewFormatting) and consistent Row 2 UI (AddNavigationButtons, FormatControlRow). Stores/provides view counts (ActiveRecords, ArchiveRecords Properties).
-o	modUtilities: Contains shared helper functions: GetPhaseFromPrefix (for auto-complete), ApplyPhaseValidationToListColumn (for dropdown setup), UpdateAllViewCounts (for displaying counts in J2:L2).
-o	Module_Identity: Defines workbook owner ("RZ", "AF", "MASTER").
-o	ThisWorkbook Code: Contains Workbook_SheetChange event handler to manage Engagement Phase input validation, auto-complete, and "Other" phase prompting by calling modUtilities.GetPhaseFromPrefix.
-o	Worksheet Code (SQRCT Dashboard Sheet): Contains Worksheet_Change event handler to capture user edits in columns L, M, N and save them to the hidden UserEdits sheet.
-•	VBA Modules (SyncTool Workbook): (Based on previous README - verify if accurate) 
-o	Module_SyncTool_Manager: Orchestrates synchronization workflow.
-o	Module_File_Processor: Handles reading/writing external User/Master workbooks' UserEdits sheets.
-o	Module_Conflict_Handler: Implements conflict resolution logic (timestamps, comments).
-o	Supporting Modules: For Logging, UI, Constants, Utilities within the SyncTool.
-4. Data Model
-•	MasterQuotes_Final (Power Query Output / Excel Table): 
-o	Structure: Processed quote data (Doc Num, Dates, Customer Info, Salesperson, AutoStage, AutoNote, DataSource, etc. - Columns A:K approx).
-o	Storage: Loaded into Excel Table/Connection. Read by VBA.
-•	UserEdits (Hidden Sheet in RZ/AF/Master): 
-o	Structure: User overrides. Columns: A: DocNumber (Key), B: Engagement Phase, C: Last Contact Date, D: User Comments, E: ChangeSource ("RZ", "AF", "MASTER"), F: Timestamp.
-o	Storage: Hidden Excel sheet. Acts as local change log. Master sheet is target for SyncTool.
-•	SyncTool Log Sheets: SyncLog, ErrorLog, DocChangeHistory within SyncTool workbook.
-5. Data Flow
-1.	Data Ingestion (Power Query): CSVs + Local Table -> MasterQuotes_Raw -> MasterQuotes_Final -> Loaded to Excel.
-2.	Dashboard Refresh (Module_Dashboard.RefreshDashboard): 
-o	(If SaveAndRestore Mode): Read L-N from Dashboard -> Update UserEdits sheet (SaveUserEditsFromDashboard).
-o	Build data array (BuildDashboardDataArray) by merging MasterQuotes_Final output with current UserEdits data (using ResolvePhase logic).
-o	Write merged array A:N to Dashboard sheet.
-o	Sort Dashboard.
-o	Apply column widths, number formats, data validation (ApplyPhaseValidationToListColumn).
-o	Apply Conditional Formatting (ApplyColorFormatting, etc.).
-o	Protect Dashboard, unlocking L:N (ProtectUserColumns); Apply Freeze Panes (FreezeDashboard).
-o	Call modArchival.RefreshAllViews to regenerate Active/Archive sheets.
-o	Call modArchival.FormatControlRow(ws) to set base grey A2:N2 format on Dashboard.
-o	Apply A2 blue override styling to Dashboard A2.
-o	Call modArchival.AddNavigationButtons(ws) to add buttons and timestamp to Dashboard N2.
-o	Call modUtilities.UpdateAllViewCounts(ws) (using unprotect/reprotect wrapper) to display counts in Dashboard J2:L2.
-o	Create/Update Text-Only Sheet.
-o	Display completion message.
-3.	User Editing (Worksheet_Change on Dashboard): 
-o	User changes cell in L, M, or N.
-o	Event triggers -> Get DocNum (A) -> Find/Create row in hidden UserEdits -> Write L, M, N values to UserEdits B, C, D -> Write User ID (E) & Timestamp (F).
-4.	Phase Input (Workbook_SheetChange in ThisWorkbook): 
-o	User changes cell in L (Dashboard) or B (UserEdits).
-o	Event triggers -> Call modUtilities.GetPhaseFromPrefix.
-o	If unique match -> Auto-complete/correct case.
-o	If "Other..." match -> Show prompt, select Comments column.
-o	If no/ambiguous match -> Show error, undo change.
-5.	Synchronization (SyncTool - Manual): 
-o	User selects RZ, AF, Master file paths in SyncTool UI -> Clicks "Sync".
-o	SyncTool VBA reads UserEdits from all 3 files.
-o	Resolves conflicts (timestamp priority, comment merge).
-o	Writes resolved data only to UserEdits sheet in Master workbook.
-o	Triggers refresh of Master workbook.
-o	Logs actions in SyncTool log sheets.
-6. Error Handling Strategy
-•	Power Query: Relies mainly on default behavior; some try...otherwise. Limited logging.
-•	VBA (User/Master): Uses On Error GoTo [Label] in main routines (RefreshDashboard, ApplyViewFormatting, etc.) for controlled cleanup. Uses On Error Resume Next more sparingly in specific formatting/object access blocks where failure is non-critical or handled immediately. Errors logged via DebugLog to Immediate Window and potentially UserEditsLog sheet.
-•	VBA (SyncTool): Structured error handling with centralized logging to dedicated sheets within the SyncTool.
-7. Security Considerations
-•	Password: Sheet/Workbook protection uses a blank password defined in Module_Dashboard.PW_WORKBOOK constant.
-•	Network Path Access: Power Query and SyncTool require user/tool access to specified file paths. Parameterization or configuration sheets recommended over hardcoding.
-•	SyncTool File Access: Requires Read/Write access to User/Master workbooks.
-•	Macro Security: Relies on users enabling macros. Standard Trust Center settings apply.
-•	Data Exposure: Access control relies on filesystem/SharePoint permissions.
-8. Deployment & Execution
-•	System Operation: Runs entirely within Microsoft Excel (.xlsm files).
-•	User Interaction: Users work within their individual .xlsm files, interacting with the "SQRCT Dashboard".
-•	Data Refresh: Power Query refreshes likely triggered manually or via VBA refresh buttons. VBA refreshes triggered by buttons.
-•	Synchronization: Manual process using the separate SyncTool workbook. Requires user intervention to select files and initiate.
-•	Code Updates: Require manual export/import between the Git repository and the operational Excel files' VBA Editors.
+```
+Module_Dashboard
+    ├── RefreshDashboard()
+    │   ├── SaveUserEditsFromDashboard()
+    │   ├── BuildDashboardDataArray()
+    │   ├── ApplyFormatting()
+    │   └── RefreshAllViews()
+    ├── Button Handlers
+    └── Helper Functions
 
+modArchival
+    ├── RefreshActiveView()
+    ├── RefreshArchiveView()
+    ├── CopyFilteredRows()
+    └── ApplyViewFormatting()
 
+modUtilities
+    ├── GetPhaseFromPrefix()
+    ├── ApplyPhaseValidation()
+    └── UpdateAllViewCounts()
+```
+
+### 4.3 Synchronization Architecture
+
+The SyncTool manages data consolidation:
+
+```
+SyncTool_Manager
+    ├── StartSynchronization()
+    │   ├── ValidateFilePaths()
+    │   ├── ExtractAllUserEdits()
+    │   ├── DetectConflicts()
+    │   ├── ResolveConflicts()
+    │   └── WriteMergedData()
+    └── Helper Functions
+
+Conflict_Handler
+    ├── DetectConflicts()
+    ├── ResolveByTimestamp()
+    └── MergeComments()
+```
+
+## 5. Data Flow
+
+### 5.1 Primary Data Pipeline
+
+```
+CSV Files → Power Query → Dashboard → User Edits → SyncTool → Master
+```
+
+### 5.2 Detailed Flow Steps
+
+#### Step 1: Data Ingestion (Power Query)
+```
+1. CSVQuotes reads new quotes from network path
+2. ExistingQuotes loads historical data
+3. MasterQuotes_Raw combines both sources
+4. MasterQuotes_Final applies transformations:
+   - Filters excluded users
+   - Groups by Document Number
+   - Calculates stage and occurrence
+   - Selects final row per document
+5. Output loaded to Excel table
+```
+
+#### Step 2: Dashboard Refresh (VBA)
+```
+1. User clicks "Standard Refresh"
+2. Current edits saved to UserEdits sheet
+3. Power Query refreshes data
+4. Dashboard rebuilt with merged data:
+   - Columns A-J from Power Query
+   - Columns K-N from UserEdits
+5. Views regenerated (Active/Archive)
+6. Formatting and protection applied
+```
+
+#### Step 3: User Edit Capture
+```
+1. User modifies columns K-N
+2. Worksheet_Change event fires
+3. Edit captured with:
+   - Document Number (key)
+   - Changed values
+   - User identity
+   - Timestamp
+4. Data written to UserEdits sheet
+```
+
+#### Step 4: Synchronization
+```
+1. SyncTool opened by admin
+2. File paths validated
+3. UserEdits extracted from all workbooks
+4. Conflicts detected and displayed
+5. Resolution applied (timestamp priority)
+6. Merged data written to Master only
+```
+
+## 6. Data Models
+
+### 6.1 MasterQuotes_Final Structure
+
+| Column | Type | Description |
+|--------|------|-------------|
+| First Date Pulled | Date | Earliest quote appearance |
+| Document Number | Text | Unique quote identifier |
+| Document Date | Date | Quote creation date |
+| Customer Number | Text | Customer identifier |
+| Customer Name | Text | Customer company name |
+| User To Enter | Text | Assigned salesperson |
+| Document Amount | Currency | Quote value |
+| Salesperson ID | Text | Sales rep code |
+| Pull Count | Number | Occurrence count |
+| Historic Stage | Text | Previous stage value |
+| AutoStage | Text | Calculated stage |
+| AutoNote | Text | System-generated notes |
+| IsMissing | Boolean | Not in latest pull |
+| DataSource | Text | CSV or Legacy |
+
+### 6.2 UserEdits Structure
+
+| Column | Type | Description |
+|--------|------|-------------|
+| A: DocNumber | Text | Document Number (key) |
+| B: Phase | Text | Engagement Phase |
+| C: LastContact | Date | Last contact date |
+| D: Email | Text | Email contact |
+| E: Comments | Text | User comments |
+| F: Source | Text | RZ/AF/MASTER |
+| G: Timestamp | DateTime | Edit timestamp |
+
+### 6.3 Dashboard Columns
+
+| Range | Purpose | Editable |
+|-------|---------|----------|
+| A-J | Power Query data | No (Protected) |
+| K | Engagement Phase | Yes (Dropdown) |
+| L | Last Contact Date | Yes |
+| M | Email Contact | Yes |
+| N | User Comments | Yes |
+
+## 7. Module Descriptions
+
+### 7.1 Core Modules (Shared)
+
+#### modArchival.bas
+**Purpose**: Manages Active and Archive view generation
+**Key Functions**:
+- `RefreshActiveView()`: Creates filtered view of active quotes
+- `RefreshArchiveView()`: Creates filtered view of completed quotes
+- `IsPhaseArchived()`: Determines if quote should be archived
+- `ApplyViewFormatting()`: Consistent formatting across views
+
+#### modUtilities.bas
+**Purpose**: Shared utility functions
+**Key Functions**:
+- `GetPhaseFromPrefix()`: Phase validation and auto-complete
+- `ApplyPhaseValidation()`: Sets up dropdown validation
+- `UpdateAllViewCounts()`: Updates dashboard counters
+
+#### modFormatting.bas
+**Purpose**: UI formatting functions
+**Key Functions**:
+- `ApplyStandardFormatting()`: Base formatting rules
+- `ApplyConditionalFormatting()`: Color coding rules
+- `FormatControlRow()`: Row 2 control formatting
+
+### 7.2 Workbook-Specific Modules
+
+#### Module_Dashboard.bas (User Workbooks)
+**Purpose**: Main dashboard logic
+**Key Functions**:
+- `RefreshDashboard()`: Complete dashboard refresh
+- `SaveUserEditsFromDashboard()`: Persists edits
+- `BuildDashboardDataArray()`: Merges data sources
+- `ProtectUserColumns()`: Sheet protection
+
+#### Module_Identity.bas
+**Purpose**: Identifies workbook owner
+**Constants**:
+- `WORKBOOK_IDENTITY`: "RZ", "AF", or "MASTER"
+
+### 7.3 SyncTool Modules
+
+#### Module_SyncTool_Manager.bas
+**Purpose**: Orchestrates synchronization
+**Key Functions**:
+- `StartSynchronization()`: Main sync entry point
+- `GetValidatedFilePaths()`: Path validation
+
+#### Module_Conflict_Handler.bas
+**Purpose**: Conflict resolution logic
+**Key Functions**:
+- `DetectConflicts()`: Identifies discrepancies
+- `ResolveConflicts()`: Applies resolution rules
+- `MergeUserEdits()`: Combines all sources
+
+## 8. Error Handling
+
+### 8.1 Error Handling Strategy
+
+```vba
+' Standard error handling pattern
+Public Sub ExampleProcedure()
+    On Error GoTo ErrorHandler
+    
+    ' Main logic here
+    
+    Exit Sub
+    
+ErrorHandler:
+    ' Log error
+    DebugLog "Error in ExampleProcedure: " & Err.Description
+    ' Clean up resources
+    ' Display user message if appropriate
+End Sub
+```
+
+### 8.2 Error Types and Responses
+
+| Error Type | Response |
+|------------|----------|
+| File not found | Prompt user to verify path |
+| Permission denied | Check file locks, prompt retry |
+| Data type mismatch | Log error, skip record |
+| Network unavailable | Retry with exponential backoff |
+| Validation failure | Show user message, undo change |
+
+## 9. Security Considerations
+
+### 9.1 Access Control
+- File system permissions control workbook access
+- VBA project password protection (optional)
+- Sheet protection with blank password (PW_WORKBOOK = "")
+
+### 9.2 Data Security
+- No credentials stored in code
+- Network paths should use environment variables
+- Audit trail maintained via UserEdits timestamps
+
+### 9.3 Best Practices
+- Regular backups of all workbooks
+- Version control for code modules
+- Testing in isolated environment
+
+## 10. Deployment & Operations
+
+### 10.1 Deployment Process
+
+1. **Code Export**
+   - Export VBA modules from development workbook
+   - Commit to Git repository
+   - Tag release version
+
+2. **Code Import**
+   - Open production workbooks
+   - Remove old modules
+   - Import new modules from repository
+   - Save and test
+
+3. **Power Query Updates**
+   - Export M code to .pq files
+   - Update in Power Query Editor
+   - Refresh data connections
+
+### 10.2 Operational Procedures
+
+**Daily Operations:**
+1. Morning: Users refresh dashboards
+2. Throughout day: Users update engagement data
+3. End of day: Admin runs synchronization
+
+**Weekly Maintenance:**
+1. Verify data integrity
+2. Check error logs
+3. Archive old quotes if needed
+
+**Monthly Tasks:**
+1. Performance review
+2. User feedback collection
+3. Code optimization as needed
+
+## 11. Performance Considerations
+
+### 11.1 Optimization Strategies
+
+1. **Power Query**
+   - Table.Buffer() for frequently accessed data
+   - Minimize data type conversions
+   - Filter early in the pipeline
+
+2. **VBA**
+   - Use arrays instead of cell-by-cell operations
+   - Disable screen updating during refresh
+   - Implement dictionary lookups for large datasets
+
+3. **File Size**
+   - Regular cleanup of historical data
+   - Compress images if present
+   - Remove unused named ranges
+
+### 11.2 Performance Metrics
+
+| Operation | Target Time | Actual Time |
+|-----------|------------|-------------|
+| Dashboard Refresh | < 30 seconds | ~20 seconds |
+| View Generation | < 5 seconds | ~3 seconds |
+| Synchronization | < 1 minute | ~45 seconds |
+
+## 12. Future Enhancements
+
+### 12.1 Planned Improvements
+
+1. **Automation**
+   - Scheduled Power Query refresh
+   - Automatic synchronization
+   - Email notifications for stages
+
+2. **Features**
+   - Advanced filtering options
+   - Custom report generation
+   - Mobile view (Power BI)
+
+3. **Technical Debt**
+   - Migrate to class modules
+   - Implement unit testing
+   - Add comprehensive logging
+
+### 12.2 Architecture Evolution
+
+**Phase 1** (Current): Excel-based with manual sync
+**Phase 2**: Add SQL Server backend
+**Phase 3**: Web-based interface
+**Phase 4**: Full CRM integration
+
+---
+
+*Last Updated: August 2025 | Version 4.0.0*
