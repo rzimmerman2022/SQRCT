@@ -99,9 +99,10 @@ SQRCT/
 ├── 📄 README.md                     # This file - main documentation
 ├── 📄 LICENSE                       # MIT License
 ├── 📄 CONTRIBUTING.md               # Contribution guidelines
-├── 📄 .gitignore                    # Git ignore rules
-├── 📄 .copilotignore                # Copilot ignore rules
-├── 📂 src/                          # Source code directory
+├── 📄 CLEANUP_MANIFEST.md           # Complete cleanup inventory and analysis
+├── 📂 src/                          # 🚀 Source code directory
+│   ├── 📄 README.md                 # Source code navigation guide
+│   ├── 📄 SQRCT_Main.xlsm           # 🚀 MAIN APPLICATION ENTRY POINT
 │   ├── 📂 vba/                      # VBA modules and classes
 │   │   ├── 📂 core/                 # Shared modules used across workbooks
 │   │   │   ├── modArchival.bas      # Archive/Active view management
@@ -110,31 +111,9 @@ SQRCT/
 │   │   │   └── modPerformanceDashboard.bas  # Performance metrics
 │   │   └── 📂 workbooks/            # Workbook-specific VBA code
 │   │       ├── 📂 ally/             # Ally's workbook modules
-│   │       │   ├── Module_Dashboard.bas
-│   │       │   ├── Module_Identity.bas  # Sets WORKBOOK_IDENTITY = "AF"
-│   │       │   └── Sheet12 (SQRCT Dashboard).cls
 │   │       ├── 📂 master/           # Master workbook modules
-│   │       │   ├── Module1.bas      # Dashboard logic
-│   │       │   └── Sheet2 (SQRCT Dashboard).cls
 │   │       ├── 📂 ryan/             # Ryan's workbook modules
-│   │       │   ├── Module_Dashboard.bas
-│   │       │   ├── Module_Identity.bas  # Sets WORKBOOK_IDENTITY = "RZ"
-│   │       │   ├── Sheet2 (SQRCT Dashboard).cls
-│   │       │   ├── ThisWorkbook.bas
-│   │       │   ├── backup/          # Historical VBA backups
-│   │       │   └── mod*.bas         # Core module copies
 │   │       └── 📂 sync_tool/        # Synchronization tool modules
-│   │           ├── Module_SyncTool_Manager.bas
-│   │           ├── Module_File_Processor.bas
-│   │           ├── Module_Conflict_Handler.bas
-│   │           ├── Module_Constants.bas
-│   │           ├── Module_Format_Helpers.bas
-│   │           ├── Module_StartUp.bas
-│   │           ├── Module_SyncTool_Logger.bas
-│   │           ├── Module_SyncTool_UI.bas
-│   │           ├── Module_UIHandlers.bas
-│   │           ├── Module_Utilities.bas
-│   │           └── ThisWorkbook.cls
 │   └── 📂 power_query/              # Power Query M language scripts
 │       ├── Query - CSVQuotes.pq     # CSV data ingestion
 │       ├── Query - ExistingQuotes.pq # Historical data query
@@ -144,22 +123,30 @@ SQRCT/
 │       ├── Map_Form_DocNum.pq       # Form mapping
 │       ├── OrderConf_*.pq           # Order confirmation queries
 │       └── Query - CLIENT QUOTES.pg  # Client quote query
-├── 📂 docs/                         # Documentation
+├── 📂 docs/                         # 📚 Documentation
 │   ├── 📄 ARCHITECTURE.md           # Detailed technical architecture
-│   ├── 📂 updates/                  # Project update history
-│   │   ├── SQRCT - Update 041725.txt
-│   │   ├── SQRCT - Update 041825.txt
-│   │   ├── SQRCT - Update 041825-2.txt
-│   │   └── SQRCT - Update 042025.txt
-│   └── 📂 word/                     # Word document archives
-│       ├── ARCHITECTURE.md.docx
-│       ├── CONTRIBUTING.md.docx
-│       └── readme.txt.docx
-└── 📂 archives/                     # Historical files
-    └── 📂 commits/                  # Commit history
-        ├── commit_message.txt
-        ├── commit_summary_20250421.txt
-        └── folder_hierarchy.txt
+│   ├── 📄 DEPLOYMENT.md             # Production deployment guide
+│   ├── 📄 CHANGELOG.md              # Complete project history
+│   ├── 📂 history/                  # Git and project history
+│   └── 📂 updates/                  # Development update history
+│       ├── SQRCT_Update_041725.md   # (Converted to Markdown)
+│       ├── SQRCT_Update_041825.md
+│       ├── SQRCT_Update_041825-2.md
+│       └── SQRCT_Update_042025.md
+├── 📂 scripts/                      # 🔧 PowerShell utilities
+│   ├── FirstCharacterAnalysis.ps1   # File analysis tool
+│   ├── Powershell_Snapshot_Script_v1.ps1
+│   ├── Run-ComprehensiveFileAnalysis.ps1
+│   ├── Run-PathLengthAnalysis.ps1
+│   └── Run-TotalFileCount.ps1
+├── 📂 tests/                        # 🧪 Test files (ready for future use)
+├── 📂 config/                       # ⚙️ Configuration files (ready for future use)
+└── 📂 archive/                      # 📦 Archived files (preserved but organized)
+    ├── 📄 ARCHIVE_CONTENTS.md       # Archive documentation
+    ├── 📂 deprecated/               # Old Excel workbook versions
+    ├── 📂 vba-backups/             # Historical VBA module backups
+    ├── 📂 word-docs/               # Word document versions
+    └── 📂 logs/                    # Historical PowerShell logs
 ```
 
 ## 🚀 Installation

@@ -1,5 +1,10 @@
-Update Summary - April 20, 2025
+# SQRCT Update - April 20, 2025
 
+**Last Updated:** 2025-04-20  
+**Version:** Post-v4.0.0 WIP  
+**Type:** Phase Logic Verification, Bug Fixes
+
+## Summary
 Project: SQRCT Dashboard
 Version Target: Post-v4.0.0 WIP (Phase Logic Verification Post-Revert)
 

@@ -1,3 +1,10 @@
+# SQRCT Update - April 17, 2025
+
+**Last Updated:** 2025-04-17  
+**Version:** Major Feature Release  
+**Type:** Refactoring, Performance, New Features
+
+## Summary
 feat: Refactor data loading, fix layout, add Active/Archive views
 
 This commit implements major updates to the SQRCT Dashboard VBA code, addressing performance, layout issues, error handling, and adding new Active/Archive view functionality.

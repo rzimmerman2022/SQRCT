@@ -1,3 +1,10 @@
+# SQRCT Update - April 18, 2025 (Part 2)
+
+**Last Updated:** 2025-04-18  
+**Version:** v4.0.0 WIP  
+**Type:** Features, Bug Fixes, UI Standardization
+
+## Summary
 Feat/Fix: Standardize UI Layout, Fix Button Creation & Phase Filter Bugs (v4.0.0 WIP)
 
 Description:

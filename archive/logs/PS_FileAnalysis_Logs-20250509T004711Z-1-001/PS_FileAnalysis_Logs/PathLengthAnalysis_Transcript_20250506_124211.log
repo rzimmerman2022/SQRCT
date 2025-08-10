@@ -1,0 +1,31 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20250506124212
+Username: sciencecare\Ryan.Zimmerman
+RunAs User: sciencecare\Ryan.Zimmerman
+Configuration Name: 
+Machine: SC-DAAS-PD-0016 (Microsoft Windows NT 10.0.20348.0)
+Host Application: C:\Windows\system32\WindowsPowerShell\v1.0\PowerShell_ISE.exe
+Process ID: 13968
+PSVersion: 5.1.20348.2849
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.20348.2849
+BuildVersion: 10.0.20348.2849
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Transcript started, output file is \\sc-file02.ad.sciencecare.com\UEMProfiles\Ryan.Zimmerman\Desktop\PS_FileAnalysis_Logs\PathLengthAnalysis_Transcript_20250506_124211.log
+[2025-05-06 12:42:12] SCRIPT START: Path Length Analysis
+[2025-05-06 12:42:12] Target Folder: W:\
+[2025-05-06 12:42:12] Using Log Directory: \\sc-file02.ad.sciencecare.com\UEMProfiles\Ryan.Zimmerman\Desktop\PS_FileAnalysis_Logs
+[2025-05-06 12:42:12] Transcript Log: \\sc-file02.ad.sciencecare.com\UEMProfiles\Ryan.Zimmerman\Desktop\PS_FileAnalysis_Logs\PathLengthAnalysis_Transcript_20250506_124211.log
+[2025-05-06 12:42:12] Data Log (CSV): \\sc-file02.ad.sciencecare.com\UEMProfiles\Ryan.Zimmerman\Desktop\PS_FileAnalysis_Logs\PathLengthAnalysis_Data_20250506_124211.csv
+[2025-05-06 12:42:12] Progress Update Interval: 1000 files
+[2025-05-06 12:42:12] Summary Update Interval (for CSV): 2 minutes
+[2025-05-06 12:42:12] Attempting to retrieve all file items and count... This may take a while.
+**********************
+Windows PowerShell transcript end
+End time: 20250506125152
+**********************

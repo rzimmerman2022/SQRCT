@@ -1,3 +1,10 @@
+# SQRCT Update - April 18, 2025
+
+**Last Updated:** 2025-04-18  
+**Version:** v4.0.0  
+**Type:** Features, Bug Fixes, UI Standardization
+
+## Summary
 Feat/Fix: Standardize UI Layout, Fix Button Creation & Phase Filter Bugs (v4.0.0)
 
 Description: Addresses UI inconsistencies, button errors, and filter bugs. Implements standardized Row 2 layout and resolves compile errors. Establishes v4.0.0 baseline.
